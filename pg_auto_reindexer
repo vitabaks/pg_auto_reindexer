@@ -42,7 +42,7 @@ done
 
 function help(){
 echo -e "
-$(basename "$0") v${version} - Automatic reindexing of B-tree indexes
+$(basename "$0") - Automatic reindexing of B-tree indexes
 
 \e[1m--pghost=\e[0m
         PostgreSQL host (default: 127.0.0.1)
@@ -75,6 +75,12 @@ $(basename "$0") v${version} - Automatic reindexing of B-tree indexes
         estimate - index bloat estimation (default)
         pgstattuple - use pgstattuple extension to search bloat indexes (could cause I/O spikes) [ optional ]
 
+-h, --help
+        show this help, then exit
+
+-V, --version
+        output version information, then exit
+
 
 \e[33mEXAMPLES:\e[0m
 
@@ -86,7 +92,7 @@ Dependencies:
 "
 exit
 }
-[ "$1" = "-v" ] || [ "$1" = "-version" ] || [ "$1" = "--version" ] && echo "$(basename "$0") v${version}" && exit
+[ "$1" = "-v" ] || [ "$1" = "-V" ] || [ "$1" = "-version" ] || [ "$1" = "--version" ] && echo "$(basename "$0") v${version}" && exit
 [ "$1" = "-h" ] || [ "$1" = "help" ] || [ "$1" = "-help" ] || [ "$1" = "--help" ] && help
 
 if [[ -z $PGHOST ]]; then PGHOST="127.0.0.1"; fi
