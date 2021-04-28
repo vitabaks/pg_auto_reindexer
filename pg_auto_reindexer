@@ -45,7 +45,7 @@ echo -e "
 $(basename "$0") - Automatic reindexing of B-tree indexes
 
 \e[1m--pghost=\e[0m
-        PostgreSQL host (default: 127.0.0.1)
+        PostgreSQL host (default: /var/run/postgresql)
 
 \e[1m--pgport=\e[0m
         PostgreSQL port (default: 5432)
@@ -95,7 +95,7 @@ exit
 [ "$1" = "-v" ] || [ "$1" = "-V" ] || [ "$1" = "-version" ] || [ "$1" = "--version" ] && echo "$(basename "$0") v${version}" && exit
 [ "$1" = "-h" ] || [ "$1" = "help" ] || [ "$1" = "-help" ] || [ "$1" = "--help" ] && help
 
-if [[ -z $PGHOST ]]; then PGHOST="127.0.0.1"; fi
+if [[ -z $PGHOST ]]; then PGHOST="/var/run/postgresql"; fi
 if [[ -z $PGPORT ]]; then PGPORT="5432"; fi
 if [[ -z $DBUSER ]]; then DBUSER="postgres"; fi
 if [[ -z $DBNAME ]]; then DBNAME=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -tAc "select datname from pg_database where not datistemplate"); fi

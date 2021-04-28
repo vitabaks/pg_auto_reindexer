@@ -13,7 +13,7 @@ pg_auto_reindexer --index_bloat=20 --index_maxsize=5000 --maintenance_start=0100
 pg_auto_reindexer - Automatic reindexing of B-tree indexes
 
 --pghost=
-        PostgreSQL host (default: 127.0.0.1)
+        PostgreSQL host (default: /var/run/postgresql)
 
 --pgport=
         PostgreSQL port (default: 5432)
