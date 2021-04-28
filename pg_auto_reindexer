@@ -2,7 +2,7 @@
 # Author: Vitaliy Kukharik (vitabaks@gmail.com)
 # Title: /usr/bin/pg_auto_reindexer - Automatic reindexing of B-tree indexes
 
-version=1.0
+version=1.1
 
 while getopts ":-:" optchar; do
     [[ "${optchar}" == "-" ]] || continue
@@ -179,6 +179,7 @@ from (
     and i.indisvalid and c.relpersistence = 'p'
     and pg_relation_size(p.indexrelid) >= ${INDEX_MINSIZE_BYTES}
     and pg_relation_size(p.indexrelid) <= ${INDEX_MAXSIZE_BYTES}
+    and schemaname <> 'pg_catalog' --exclude system catalog
 ) t
 where round((free_space*100/index_size)::numeric, 1) >= ${INDEX_BLOAT}
 order by index_size asc;
@@ -270,6 +271,7 @@ FROM (
             JOIN pg_catalog.pg_stats s ON s.schemaname = n.nspname
                                       AND s.tablename = i.attrelname
                                       AND s.attname = i.attname
+            WHERE schemaname <> 'pg_catalog' --exclude system catalog
             GROUP BY 1,2,3,4,5,6,7,8,9,10,11
       ) AS rows_data_stats
   ) AS rows_hdr_pdg_stats
