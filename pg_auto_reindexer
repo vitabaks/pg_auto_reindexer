@@ -2,7 +2,7 @@
 # Author: Vitaliy Kukharik (vitabaks@gmail.com)
 # Title: /usr/bin/pg_auto_reindexer - Automatic reindexing of B-tree indexes
 
-version=1.1
+version=1.2
 
 while getopts ":-:" optchar; do
     [[ "${optchar}" == "-" ]] || continue
@@ -325,6 +325,12 @@ for db in $DBNAME; do
                     info "reindex index $index"
                     if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAc 'REINDEX INDEX CONCURRENTLY $index' 1> /dev/null";
                     then
+                        # If the index marked INVALID is suffixed ccnew, then it corresponds to the transient index created during the concurrent operation, and the recommended recovery method is to drop it using DROP INDEX 
+                        invalid_index=$(bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAc \"SELECT quote_ident(schemaname)||'.'||quote_ident(indexrelname) as index_full_name FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname = '${index}_ccnew'\" 1> /dev/null")
+                        if [ -n "$invalid_index" ]; then
+                            warnmsg "... drop invalid index $invalid_index"
+                            bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAc 'DROP INDEX CONCURRENTLY IF EXISTS $invalid_index' 1> /dev/null"
+                        fi
                         errmsg "reindex index $index ( database $db ) - Failed"
                     fi
                 sleep 2s
