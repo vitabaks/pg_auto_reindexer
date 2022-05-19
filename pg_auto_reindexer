@@ -98,14 +98,14 @@ exit
 if [[ -z $PGHOST ]]; then PGHOST="/var/run/postgresql"; fi
 if [[ -z $PGPORT ]]; then PGPORT="5432"; fi
 if [[ -z $DBUSER ]]; then DBUSER="postgres"; fi
-if [[ -z $DBNAME ]]; then DBNAME=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -tAc "select datname from pg_database where not datistemplate"); fi
+if [[ -z $DBNAME ]]; then DBNAME=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -tAXc "select datname from pg_database where not datistemplate"); fi
 if [[ -z $INDEX_BLOAT ]]; then INDEX_BLOAT="30"; fi
 if [[ -z $BLOAT_SEARCH_METHOD ]]; then BLOAT_SEARCH_METHOD="estimate"; fi
 if [[ -z $INDEX_MINSIZE ]]; then INDEX_MINSIZE_BYTES="1000000"; else INDEX_MINSIZE_BYTES=$(( INDEX_MINSIZE * 1000*1000 ));fi
 if [[ -z $INDEX_MAXSIZE ]]; then INDEX_MAXSIZE="1000000"; fi
 INDEX_MAXSIZE_BYTES=$(( INDEX_MAXSIZE * 1000*1000 ))
 
-PG_VERSION=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -tAc "select setting::integer/10000 from pg_settings where name = 'server_version_num'")
+PG_VERSION=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -tAXc "select setting::integer/10000 from pg_settings where name = 'server_version_num'")
 
 function info(){
     msg="$1"
@@ -125,11 +125,11 @@ function errmsg(){
 }
 
 function pg_isready(){
-    if ! psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -tAc "select 1" 1> /dev/null; then
+    if ! psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -tAXc "select 1" 1> /dev/null; then
         errmsg "PostgreSQL server ${PGHOST}:${PGPORT} no response"
     else
     # in recovery mode?
-    state=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -tAc 'SELECT pg_is_in_recovery()') 2>/dev/null
+    state=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -tAXc 'SELECT pg_is_in_recovery()') 2>/dev/null
         if [ "$state" = "t" ]; then
         warnmsg "This server is in recovery mode. Index maintenance will not be performed on that server."
         exit
@@ -139,12 +139,12 @@ function pg_isready(){
 
 function create_extension_pgstattuple(){
     if [[ "${BLOAT_SEARCH_METHOD}" = "pgstattuple" ]]; then
-        psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d "$db" -tAc "create extension if not exists pgstattuple;" &>/dev/null
+        psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d "$db" -tAXc "create extension if not exists pgstattuple;" &>/dev/null
     fi
 }
 
 function create_extension_pg_repack(){
-    psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d "$db" -tAc "create extension if not exists pg_repack" &>/dev/null
+    psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d "$db" -tAXc "create extension if not exists pg_repack" &>/dev/null
 }
 
 function maintenance_window(){
@@ -301,7 +301,7 @@ for db in $DBNAME; do
     if pg_isready; then
     create_extension_pgstattuple
     info "Start index maintenance for database: $db"
-        bloat_indexes=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d "$db" -tAc "$INDEX_BLOAT_SQL")
+        bloat_indexes=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d "$db" -tAXc "$INDEX_BLOAT_SQL")
         if [ -z "$bloat_indexes" ];
         then
             info "... no bloat indexes were found"
@@ -323,13 +323,13 @@ for db in $DBNAME; do
                 for index in $bloat_indexes; do
                     maintenance_window
                     info "reindex index $index"
-                    if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAc 'REINDEX INDEX CONCURRENTLY $index' 1> /dev/null";
+                    if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAXc 'REINDEX INDEX CONCURRENTLY $index' 1> /dev/null";
                     then
                         # If the index marked INVALID is suffixed ccnew, then it corresponds to the transient index created during the concurrent operation, and the recommended recovery method is to drop it using DROP INDEX 
-                        invalid_index=$(bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAc \"SELECT quote_ident(schemaname)||'.'||quote_ident(indexrelname) as index_full_name FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname = '${index}_ccnew'\" 1> /dev/null")
+                        invalid_index=$(bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAXc \"SELECT quote_ident(schemaname)||'.'||quote_ident(indexrelname) as index_full_name FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname = '${index}_ccnew'\" 1> /dev/null")
                         if [ -n "$invalid_index" ]; then
                             warnmsg "... drop invalid index $invalid_index"
-                            bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAc 'DROP INDEX CONCURRENTLY IF EXISTS $invalid_index' 1> /dev/null"
+                            bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAXc 'DROP INDEX CONCURRENTLY IF EXISTS $invalid_index' 1> /dev/null"
                         fi
                         errmsg "reindex index $index ( database $db ) - Failed"
                     fi
