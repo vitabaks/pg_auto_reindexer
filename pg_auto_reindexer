@@ -116,6 +116,7 @@ function warnmsg(){
     msg="$1"
     echo -e "$(date "+%F %T") \e[33mWARN:\e[0m $msg"
     logger -p user.notice -t "$(basename "$0")" "$msg"
+    return 1
 }
 function errmsg(){
     msg="$1"
@@ -288,7 +289,7 @@ fi
 
 # SET PGOPTIONS
 PGOPTIONS="-c statement_timeout=0 -c lock_timeout=10s"
-# disable max_parallel_maintenance_workers
+# disable parallel maintenance workers
 if [[ $PG_VERSION -ge 11 ]]; then
 PGOPTIONS+=" -c max_parallel_maintenance_workers=0"
 fi
@@ -342,7 +343,7 @@ for db in $DBNAME; do
                 sleep 2s
                 done
             fi
-            info "Index maintenance for database $db - completed"
+            info "Index maintenance for database $db - Completed"
         fi
     fi
 done
