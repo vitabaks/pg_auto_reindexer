@@ -73,7 +73,7 @@ sudo chmod 750 /usr/bin/pg_auto_reindexer
 ## Logging
 By default, the script execution is written in syslog. Get the pg_auto_reindexer log:
 ```
-grep pg_auto_reindexer /var/log/syslog
+sudo grep pg_auto_reindexer /var/log/syslog
 ```
 
 ## License
