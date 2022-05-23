@@ -311,6 +311,7 @@ for db in $DBNAME; do
             if [[ $PG_VERSION -le 11 ]]; then
             create_extension_pg_repack
                 for index in $bloat_indexes; do
+                    pg_isready
                     maintenance_window
                     info "repack index $index"
                     if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\" pg_repack -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -i $index --elevel=ERROR";
@@ -328,6 +329,7 @@ for db in $DBNAME; do
             # if postgres >= 12 use reindex concurrently
             elif [[ $PG_VERSION -ge 12 ]]; then
                 for index in $bloat_indexes; do
+                    pg_isready
                     maintenance_window
                     info "reindex index $index"
                     if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAXc 'REINDEX INDEX CONCURRENTLY $index' 1> /dev/null";
