@@ -65,7 +65,7 @@ all supported PostgreSQL versions
 Example:
 ```
 wget https://raw.githubusercontent.com/vitabaks/pg_auto_reindexer/master/pg_auto_reindexer
-sudo cp pg_auto_reindexer /usr/bin/
+sudo mv pg_auto_reindexer /usr/bin/
 sudo chown postgres:postgres /usr/bin/pg_auto_reindexer
 sudo chmod 750 /usr/bin/pg_auto_reindexer
 ```
