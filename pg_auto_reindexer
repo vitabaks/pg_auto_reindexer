@@ -309,7 +309,7 @@ for db in $DBNAME; do
         else
             # if postgres <= 11 use pg_repack
             if [[ $PG_VERSION -le 11 ]]; then
-            create_extension_pg_repack
+                create_extension_pg_repack
                 for index in $bloat_indexes; do
                     pg_isready
                     maintenance_window
@@ -321,7 +321,7 @@ for db in $DBNAME; do
                             warnmsg "A temporary index apparently created by pg_repack has been left behind, and we do not want to risk dropping this index ourselves. If the index was in fact created by an old pg_repack job which didn't get cleaned up, you should just use DROP INDEX CONCURRENTLY and try the pg_auto_reindexer again."
                             info "invalid indexes: $invalid_index"
 
-                            errmsg "Index maintenance for database $db - Failed"
+                            errmsg "Index maintenance for database: $db - Failed"
                         fi
                 sleep 2s
                 done
@@ -343,12 +343,12 @@ for db in $DBNAME; do
                             fi
                         fi
                         warnmsg "failed to reindex index $index"
-                        errmsg "Index maintenance for database $db - Failed"
+                        errmsg "Index maintenance for database: $db - Failed"
                     fi
                 sleep 2s
                 done
             fi
-            info "Index maintenance for database $db - Completed"
+            info "Index maintenance for database: $db - Completed"
         fi
     fi
 done
