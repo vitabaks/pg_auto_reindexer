@@ -316,7 +316,7 @@ for db in $DBNAME; do
                     info "repack index $index"
                     bash -c "PGOPTIONS=\"${PGOPTIONS}\" pg_repack -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -i $index --elevel=INFO"
                     # check for invalid temporary indexes with the suffix "index_"
-                    invalid_index=$(bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAXc \"SELECT quote_ident(schemaname)||'.'||quote_ident(indexrelname) as invalid_index FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname like 'index_%' 1> /dev/null")
+                    invalid_index=$(bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAXc \"SELECT quote_ident(schemaname)||'.'||quote_ident(indexrelname) as invalid_index FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname like 'index_%'\" 1> /dev/null")
                         if [ -n "$invalid_index" ]; then
                             warnmsg "A temporary index apparently created by pg_repack has been left behind, and we do not want to risk dropping this index ourselves. If the index was in fact created by an old pg_repack job which didn't get cleaned up, you should just use DROP INDEX CONCURRENTLY and try the pg_auto_reindexer again."
                             info "$invalid_index"
