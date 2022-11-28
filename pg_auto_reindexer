@@ -314,7 +314,7 @@ for db in $DBNAME; do
                     pg_isready
                     maintenance_window
                     info "repack index $index"
-                    if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\"; pg_repack -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -i $index --elevel=ERROR";
+                    if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\"; pg_repack -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -i '$index' --elevel=ERROR";
                     then
                         errmsg "Index maintenance for database: $db - Failed"
                     fi
