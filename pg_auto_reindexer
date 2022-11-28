@@ -95,18 +95,6 @@ exit
 [ "$1" = "-v" ] || [ "$1" = "-V" ] || [ "$1" = "-version" ] || [ "$1" = "--version" ] && echo "$(basename "$0") v${version}" && exit
 [ "$1" = "-h" ] || [ "$1" = "help" ] || [ "$1" = "-help" ] || [ "$1" = "--help" ] && help
 
-if [[ -z $PGHOST ]]; then PGHOST="/var/run/postgresql"; fi
-if [[ -z $PGPORT ]]; then PGPORT="5432"; fi
-if [[ -z $DBUSER ]]; then DBUSER="postgres"; fi
-if [[ -z $DBNAME ]]; then DBNAME=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d postgres -tAXc "select datname from pg_database where not datistemplate"); fi
-if [[ -z $INDEX_BLOAT ]]; then INDEX_BLOAT="30"; fi
-if [[ -z $BLOAT_SEARCH_METHOD ]]; then BLOAT_SEARCH_METHOD="estimate"; fi
-if [[ -z $INDEX_MINSIZE ]]; then INDEX_MINSIZE_BYTES="1000000"; else INDEX_MINSIZE_BYTES=$(( INDEX_MINSIZE * 1000*1000 ));fi
-if [[ -z $INDEX_MAXSIZE ]]; then INDEX_MAXSIZE="1000000"; fi
-INDEX_MAXSIZE_BYTES=$(( INDEX_MAXSIZE * 1000*1000 ))
-
-PG_VERSION=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d postgres -tAXc "select setting::integer/10000 from pg_settings where name = 'server_version_num'")
-
 function info(){
     msg="$1"
     echo -e "$(date "+%F %T") INFO: $msg"
@@ -125,12 +113,24 @@ function errmsg(){
     exit 1
 }
 
+if [[ -z $PGHOST ]]; then PGHOST="/var/run/postgresql"; fi
+if [[ -z $PGPORT ]]; then PGPORT="5432"; fi
+if [[ -z $DBUSER ]]; then DBUSER="postgres"; fi
+if [[ -z $DBNAME ]]; then if ! DBNAME=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d postgres -tAc "select datname from pg_database where not datistemplate"); then errmsg "Unable to connect to database postgres on ${PGHOST}:${PGPORT} ";exit 1;fi; fi
+if [[ -z $INDEX_BLOAT ]]; then INDEX_BLOAT="30"; fi
+if [[ -z $BLOAT_SEARCH_METHOD ]]; then BLOAT_SEARCH_METHOD="estimate"; fi
+if [[ -z $INDEX_MINSIZE ]]; then INDEX_MINSIZE_BYTES="1000000"; else INDEX_MINSIZE_BYTES=$(( INDEX_MINSIZE * 1000*1000 ));fi
+if [[ -z $INDEX_MAXSIZE ]]; then INDEX_MAXSIZE="1000000"; fi
+INDEX_MAXSIZE_BYTES=$(( INDEX_MAXSIZE * 1000*1000 ))
+
+PG_VERSION=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $(echo ${DBNAME}|awk '{print $1}') -tAXc "select setting::integer/10000 from pg_settings where name = 'server_version_num'")
+
 function pg_isready(){
-    if ! psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d ${DBNAME} -tAXc "select 1" 1> /dev/null; then
+    if ! psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $(echo ${DBNAME}|awk '{print $1}') -tAXc "select 1" 1> /dev/null; then
         errmsg "PostgreSQL server ${PGHOST}:${PGPORT} no response"
     else
     # in recovery mode?
-    state=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d ${DBNAME} -tAXc 'SELECT pg_is_in_recovery()') 2>/dev/null
+    state=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $(echo ${DBNAME}|awk '{print $1}') -tAXc 'SELECT pg_is_in_recovery()') 2>/dev/null
         if [ "$state" = "t" ]; then
         warnmsg "This server is in recovery mode. Index maintenance will not be performed on that server."
         exit
