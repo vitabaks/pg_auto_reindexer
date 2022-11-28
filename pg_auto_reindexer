@@ -98,14 +98,14 @@ exit
 if [[ -z $PGHOST ]]; then PGHOST="/var/run/postgresql"; fi
 if [[ -z $PGPORT ]]; then PGPORT="5432"; fi
 if [[ -z $DBUSER ]]; then DBUSER="postgres"; fi
-if [[ -z $DBNAME ]]; then DBNAME=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -tAXc "select datname from pg_database where not datistemplate"); fi
+if [[ -z $DBNAME ]]; then DBNAME=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d postgres -tAXc "select datname from pg_database where not datistemplate"); fi
 if [[ -z $INDEX_BLOAT ]]; then INDEX_BLOAT="30"; fi
 if [[ -z $BLOAT_SEARCH_METHOD ]]; then BLOAT_SEARCH_METHOD="estimate"; fi
 if [[ -z $INDEX_MINSIZE ]]; then INDEX_MINSIZE_BYTES="1000000"; else INDEX_MINSIZE_BYTES=$(( INDEX_MINSIZE * 1000*1000 ));fi
 if [[ -z $INDEX_MAXSIZE ]]; then INDEX_MAXSIZE="1000000"; fi
 INDEX_MAXSIZE_BYTES=$(( INDEX_MAXSIZE * 1000*1000 ))
 
-PG_VERSION=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -tAXc "select setting::integer/10000 from pg_settings where name = 'server_version_num'")
+PG_VERSION=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d postgres -tAXc "select setting::integer/10000 from pg_settings where name = 'server_version_num'")
 
 function info(){
     msg="$1"
@@ -126,11 +126,11 @@ function errmsg(){
 }
 
 function pg_isready(){
-    if ! psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -tAXc "select 1" 1> /dev/null; then
+    if ! psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d ${DBNAME} -tAXc "select 1" 1> /dev/null; then
         errmsg "PostgreSQL server ${PGHOST}:${PGPORT} no response"
     else
     # in recovery mode?
-    state=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -tAXc 'SELECT pg_is_in_recovery()') 2>/dev/null
+    state=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d ${DBNAME} -tAXc 'SELECT pg_is_in_recovery()') 2>/dev/null
         if [ "$state" = "t" ]; then
         warnmsg "This server is in recovery mode. Index maintenance will not be performed on that server."
         exit
