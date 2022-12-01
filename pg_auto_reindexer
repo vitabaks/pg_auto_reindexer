@@ -95,18 +95,6 @@ exit
 [ "$1" = "-v" ] || [ "$1" = "-V" ] || [ "$1" = "-version" ] || [ "$1" = "--version" ] && echo "$(basename "$0") v${version}" && exit
 [ "$1" = "-h" ] || [ "$1" = "help" ] || [ "$1" = "-help" ] || [ "$1" = "--help" ] && help
 
-if [[ -z $PGHOST ]]; then PGHOST="/var/run/postgresql"; fi
-if [[ -z $PGPORT ]]; then PGPORT="5432"; fi
-if [[ -z $DBUSER ]]; then DBUSER="postgres"; fi
-if [[ -z $DBNAME ]]; then DBNAME=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -tAXc "select datname from pg_database where not datistemplate"); fi
-if [[ -z $INDEX_BLOAT ]]; then INDEX_BLOAT="30"; fi
-if [[ -z $BLOAT_SEARCH_METHOD ]]; then BLOAT_SEARCH_METHOD="estimate"; fi
-if [[ -z $INDEX_MINSIZE ]]; then INDEX_MINSIZE_BYTES="1000000"; else INDEX_MINSIZE_BYTES=$(( INDEX_MINSIZE * 1000*1000 ));fi
-if [[ -z $INDEX_MAXSIZE ]]; then INDEX_MAXSIZE="1000000"; fi
-INDEX_MAXSIZE_BYTES=$(( INDEX_MAXSIZE * 1000*1000 ))
-
-PG_VERSION=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -tAXc "select setting::integer/10000 from pg_settings where name = 'server_version_num'")
-
 function info(){
     msg="$1"
     echo -e "$(date "+%F %T") INFO: $msg"
@@ -125,12 +113,23 @@ function errmsg(){
     exit 1
 }
 
+if [[ -z $PGHOST ]]; then PGHOST="/var/run/postgresql"; fi
+if [[ -z $PGPORT ]]; then PGPORT="5432"; fi
+if [[ -z $DBUSER ]]; then DBUSER="postgres"; fi
+if [[ -z $DBNAME ]]; then if ! DBNAME=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d postgres -tAc "select datname from pg_database where not datistemplate"); then errmsg "Unable to connect to database postgres on ${PGHOST}:${PGPORT} ";exit 1;fi; fi
+if [[ -z $INDEX_BLOAT ]]; then INDEX_BLOAT="30"; fi
+if [[ -z $BLOAT_SEARCH_METHOD ]]; then BLOAT_SEARCH_METHOD="estimate"; fi
+if [[ -z $INDEX_MINSIZE ]]; then INDEX_MINSIZE="1"; fi
+if [[ -z $INDEX_MAXSIZE ]]; then INDEX_MAXSIZE="1000000"; fi
+
+PG_VERSION=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $(echo ${DBNAME}|awk '{print $1}') -tAXc "select setting::integer/10000 from pg_settings where name = 'server_version_num'")
+
 function pg_isready(){
-    if ! psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -tAXc "select 1" 1> /dev/null; then
+    if ! psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $(echo ${DBNAME}|awk '{print $1}') -tAXc "select 1" 1> /dev/null; then
         errmsg "PostgreSQL server ${PGHOST}:${PGPORT} no response"
     else
     # in recovery mode?
-    state=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -tAXc 'SELECT pg_is_in_recovery()') 2>/dev/null
+    state=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $(echo ${DBNAME}|awk '{print $1}') -tAXc 'SELECT pg_is_in_recovery()') 2>/dev/null
         if [ "$state" = "t" ]; then
         warnmsg "This server is in recovery mode. Index maintenance will not be performed on that server."
         exit
@@ -146,6 +145,10 @@ function create_extension_pgstattuple(){
 
 function create_extension_pg_repack(){
     psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d "$db" -tAXc "create extension if not exists pg_repack" &>/dev/null
+}
+
+function check_index_size(){
+    psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d "$db" -tAXc "select pg_relation_size('$1')/1024/1024"
 }
 
 function maintenance_window(){
@@ -178,8 +181,8 @@ from (
     join pg_index i on i.indexrelid = p.indexrelid
     where pg_get_indexdef(p.indexrelid) like '%USING btree%'
     and i.indisvalid and c.relpersistence = 'p'
-    and pg_relation_size(p.indexrelid) >= ${INDEX_MINSIZE_BYTES}
-    and pg_relation_size(p.indexrelid) <= ${INDEX_MAXSIZE_BYTES}
+    and pg_relation_size(p.indexrelid)/1024/1024 >= ${INDEX_MINSIZE}
+    and pg_relation_size(p.indexrelid)/1024/1024 <= ${INDEX_MAXSIZE}
     and schemaname <> 'pg_catalog' --exclude system catalog
 ) t
 where round((free_space*100/index_size)::numeric, 1) >= ${INDEX_BLOAT}
@@ -277,8 +280,8 @@ FROM (
       ) AS rows_data_stats
   ) AS rows_hdr_pdg_stats
 ) AS relation_stats
-WHERE bs*(relpages)::bigint >= ${INDEX_MINSIZE_BYTES}
-AND bs*(relpages)::bigint <= ${INDEX_MAXSIZE_BYTES}
+WHERE bs*(relpages)::bigint/1024/1024 >= ${INDEX_MINSIZE}
+AND bs*(relpages)::bigint/1024/1024 <= ${INDEX_MAXSIZE}
 AND round((100 * (relpages-est_pages_ff)::float / relpages)::numeric, 1) >= ${INDEX_BLOAT}
 ORDER BY index_size ASC
 )
@@ -298,26 +301,32 @@ fi
 maintenance_window
 
 # REINDEX
+total_maintenance_benefit=0
 for db in $DBNAME; do
     if pg_isready; then
     create_extension_pgstattuple
-    info "Start index maintenance for database: $db"
+    info "Started index maintenance for database: $db"
         bloat_indexes=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d "$db" -tAXc "$INDEX_BLOAT_SQL")
         if [ -z "$bloat_indexes" ];
         then
-            info "... no bloat indexes were found"
+             info "  no bloat indexes were found"
+             info "Completed index maintenance for database: $db"
         else
+            db_maintenance_benefit=0
             # if postgres <= 11 use pg_repack
             if [[ $PG_VERSION -le 11 ]]; then
                 create_extension_pg_repack
                 for index in $bloat_indexes; do
                     pg_isready
                     maintenance_window
-                    info "repack index $index"
-                    if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\" pg_repack -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -i $index --elevel=ERROR";
+                    index_size_before=`check_index_size $index`
+                    info "  started repack index $index size: $index_size_before MB"
+                    if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\"; pg_repack -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -i '$index' --elevel=ERROR";
                     then
                         errmsg "Index maintenance for database: $db - Failed"
                     fi
+                    index_size_after=`check_index_size $index`
+                    info "  completed repack index $index size after: $index_size_after MB"
                     # check for invalid temporary indexes with the suffix "index_"
                     invalid_index=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d "$db" -tAXc "SELECT string_agg(quote_ident(schemaname)||'.'||quote_ident(indexrelname), ', ') FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname like 'index_%'")
                     if [ -n "$invalid_index" ]; then
@@ -333,28 +342,35 @@ for db in $DBNAME; do
                 for index in $bloat_indexes; do
                     pg_isready
                     maintenance_window
-                    info "reindex index $index"
-                    if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAXc 'REINDEX INDEX CONCURRENTLY $index' 1> /dev/null";
+                    index_size_before=`check_index_size $index`
+                    info "  started reindex index $index size: $index_size_before MB"
+                    if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\"; psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAXc 'REINDEX INDEX CONCURRENTLY $index' 1> /dev/null";
                     then
                         # If the index marked INVALID is suffixed ccnew, then it corresponds to the transient index created during the concurrent operation, and the recommended recovery method is to drop it using DROP INDEX 
                         invalid_index=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d "$db" -tAXc "SELECT quote_ident(schemaname)||'.'||quote_ident(indexrelname) as invalid_index FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND quote_ident(schemaname)||'.'||quote_ident(indexrelname) = '${index}_ccnew'")
                         if [ -n "$invalid_index" ]; then
-                            warnmsg "... drop invalid index $invalid_index"
+                            warnmsg "  drop invalid index $invalid_index"
                             if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAXc 'DROP INDEX CONCURRENTLY $invalid_index' 1> /dev/null";
                             then
-                                warnmsg "... failed to drop invalid index $invalid_index"
+                                warnmsg "  failed to drop invalid index $invalid_index"
                                 warnmsg "The index marked INVALID with the suffixed ccnew corresponds to the transient index created during the concurrent operation, and the recommended recovery method is to drop it using DROP INDEX CONCURRENTLY and try the pg_auto_reindexer again."
                             fi
                         fi
-                        warnmsg "failed to reindex index $index"
+                        warnmsg "   failed to reindex index $index"
                         errmsg "Index maintenance for database: $db - Failed"
                     fi
+                    index_size_after=`check_index_size $index`
+                    info "  completed reindex index $index size after: $index_size_after MB"
+                    db_maintenance_benefit=$((db_maintenance_benefit+index_size_before-index_size_after))
                 sleep 2s
                 done
             fi
-            info "Index maintenance for database: $db - Completed"
+            total_maintenance_benefit=$((total_maintenance_benefit+db_maintenance_benefit))
+            info "Completed index maintenance for database: $db"
+            info "Totally released for database $db - $db_maintenance_benefit MB"
         fi
     fi
 done
+info "Totally released during maintenance - $total_maintenance_benefit MB"
 
 exit
