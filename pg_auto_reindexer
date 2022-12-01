@@ -291,7 +291,7 @@ fi
 
 
 # SET PGOPTIONS
-PGOPTIONS="-c statement_timeout=0 -c lock_timeout=10s"
+PGOPTIONS="-c statement_timeout=0 -c lock_timeout=1s"
 # disable parallel maintenance workers
 if [[ $PG_VERSION -ge 11 ]]; then
 PGOPTIONS+=" -c max_parallel_maintenance_workers=0"
