@@ -329,6 +329,7 @@ maintenance_window
 # REINDEX
 total_maintenance_benefit=0
 for db in $DBNAME; do
+    db_maintenance_benefit=0
     if pg_isready; then
     create_extension_pgstattuple
     info "Started index maintenance for database: $db"
@@ -339,7 +340,6 @@ for db in $DBNAME; do
              info "Completed index maintenance for database: $db"
         else
             per_db_failed_indexes=0
-            db_maintenance_benefit=0
             # if postgres <= 11 use pg_repack
             if [[ $PG_VERSION -le 11 ]]; then
                 create_extension_pg_repack
@@ -355,7 +355,7 @@ for db in $DBNAME; do
                     for delay in 0 10 30 60
                     do
                         sleep $delay
-                        if bash -c "PGOPTIONS=\"${PGOPTIONS}\" pg_repack -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -i '$index' --elevel=ERROR" 2>&1 | warnmsg; then
+                        if bash -c "PGOPTIONS=\"${PGOPTIONS}\" pg_repack -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -i '$index' --elevel=WARNING" 2>&1 | warnmsg; then
                             break
                         else
                             if [[ $delay -eq 60 ]]; then
