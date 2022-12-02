@@ -327,6 +327,7 @@ for db in $DBNAME; do
                     fi
                     index_size_after=`check_index_size $index`
                     info "  completed repack index $index size after: $index_size_after MB"
+                    db_maintenance_benefit=$((db_maintenance_benefit+index_size_before-index_size_after))
                     # check for invalid temporary indexes with the suffix "index_"
                     invalid_index=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d "$db" -tAXc "SELECT string_agg(quote_ident(schemaname)||'.'||quote_ident(indexrelname), ', ') FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname like 'index_%'")
                     if [ -n "$invalid_index" ]; then
@@ -365,12 +366,11 @@ for db in $DBNAME; do
                 sleep 2s
                 done
             fi
-            total_maintenance_benefit=$((total_maintenance_benefit+db_maintenance_benefit))
             info "Completed index maintenance for database: $db"
             info "Totally released for database $db - $db_maintenance_benefit MB"
         fi
     fi
+    total_maintenance_benefit=$((total_maintenance_benefit+db_maintenance_benefit))
 done
 info "Totally released during maintenance - $total_maintenance_benefit MB"
-
 exit
