@@ -37,6 +37,9 @@ while getopts ":-:" optchar; do
         maintenance_stop=* )
             MAINTENANCE_STOP=${OPTARG#*=}
             ;;
+        failed_per_db_threshold=* )
+            FAILED_PER_DB_THRESHOLD=${OPTARG#*=}
+            ;;
     esac
 done
 
@@ -75,6 +78,10 @@ $(basename "$0") - Automatic reindexing of B-tree indexes
         estimate - index bloat estimation (default)
         pgstattuple - use pgstattuple extension to search bloat indexes (could cause I/O spikes) [ optional ]
 
+\e[1m--failed_per_db_threshold=\e[0m
+        If set, script will keep running for specific database, until more than this number of indexes fail to reindex.
+        After reaching threshold - script moves to next database (default: 1)
+
 -h, --help
         show this help, then exit
 
@@ -96,18 +103,36 @@ exit
 [ "$1" = "-h" ] || [ "$1" = "help" ] || [ "$1" = "-help" ] || [ "$1" = "--help" ] && help
 
 function info(){
-    msg="$1"
+    if [ -n "$1" ]; then
+        msg="$1"
+    else
+        read msg
+        msg="  $msg"
+    fi
     echo -e "$(date "+%F %T") INFO: $msg"
     logger -p user.notice -t "$(basename "$0")" "$msg"
 }
 function warnmsg(){
-    msg="$1"
+    if [ -n "$1" ]; then
+        msg="$1"
+    else
+        read msg
+        msg="  $msg"
+        if [[ $msg == "  " ]]; then
+            return 0
+        fi
+    fi
     echo -e "$(date "+%F %T") \e[33mWARN:\e[0m $msg"
     logger -p user.notice -t "$(basename "$0")" "$msg"
     return 1
 }
 function errmsg(){
-    msg="$1"
+    if [ -n "$1" ]; then
+        msg="$1"
+    else
+        read msg
+        msg="  $msg"
+    fi
     echo -e "$(date "+%F %T") \e[91mERROR:\e[0m $msg"
     logger -p user.error -t "$(basename "$0")" "$msg"
     exit 1
@@ -121,6 +146,7 @@ if [[ -z $INDEX_BLOAT ]]; then INDEX_BLOAT="30"; fi
 if [[ -z $BLOAT_SEARCH_METHOD ]]; then BLOAT_SEARCH_METHOD="estimate"; fi
 if [[ -z $INDEX_MINSIZE ]]; then INDEX_MINSIZE="1"; fi
 if [[ -z $INDEX_MAXSIZE ]]; then INDEX_MAXSIZE="1000000"; fi
+if [[ -z $FAILED_PER_DB_THRESHOLD ]]; then FAILED_PER_DB_THRESHOLD="1"; fi
 
 PG_VERSION=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $(echo ${DBNAME}|awk '{print $1}') -tAXc "select setting::integer/10000 from pg_settings where name = 'server_version_num'")
 
@@ -303,6 +329,7 @@ maintenance_window
 # REINDEX
 total_maintenance_benefit=0
 for db in $DBNAME; do
+    db_maintenance_benefit=0
     if pg_isready; then
     create_extension_pgstattuple
     info "Started index maintenance for database: $db"
@@ -312,65 +339,91 @@ for db in $DBNAME; do
              info "  no bloat indexes were found"
              info "Completed index maintenance for database: $db"
         else
-            db_maintenance_benefit=0
+            per_db_failed_indexes=0
             # if postgres <= 11 use pg_repack
             if [[ $PG_VERSION -le 11 ]]; then
                 create_extension_pg_repack
                 for index in $bloat_indexes; do
+                    if [[ $per_db_failed_indexes -ge $FAILED_PER_DB_THRESHOLD ]]; then
+                        warnmsg "Index maintenance for database: $db exceeded $FAILED_PER_DB_THRESHOLD failed indexes. Skipping."
+                        break
+                    fi
                     pg_isready
                     maintenance_window
                     index_size_before=`check_index_size $index`
                     info "  started repack index $index size: $index_size_before MB"
-                    if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\" pg_repack -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -i '$index' --elevel=ERROR";
-                    then
-                        errmsg "Index maintenance for database: $db - Failed"
-                    fi
-                    index_size_after=`check_index_size $index`
-                    info "  completed repack index $index size after: $index_size_after MB"
+                    for delay in 0 10 30 60
+                    do
+                        sleep $delay
+                        if bash -c "PGOPTIONS=\"${PGOPTIONS}\" pg_repack -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -i '$index' --elevel=WARNING" 2>&1 | warnmsg; then
+                            break
+                        else
+                            if [[ $delay -eq 60 ]]; then
+                                warnmsg "  failed to repack index $index after all attempts. Skipping"
+                                per_db_failed_indexes=$((per_db_failed_indexes+1))
+                                continue 2
+                            fi
+                            warnmsg "  failed repack index $index."
+                        fi
+                    done
                     # check for invalid temporary indexes with the suffix "index_"
                     invalid_index=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d "$db" -tAXc "SELECT string_agg(quote_ident(schemaname)||'.'||quote_ident(indexrelname), ', ') FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname like 'index_%'")
                     if [ -n "$invalid_index" ]; then
                         warnmsg "A temporary index apparently created by pg_repack has been left behind, and we do not want to risk dropping this index ourselves. If the index was in fact created by an old pg_repack job which didn't get cleaned up, you should just use DROP INDEX CONCURRENTLY and try the pg_auto_reindexer again."
                         warnmsg "invalid indexes: $invalid_index"
-
-                        errmsg "Index maintenance for database: $db - Failed"
+                        warnmsg "Index maintenance for database: $db - Failed. Skipping."
+                        continue 2
                     fi
+                    index_size_after=`check_index_size $index`
+                    info "  completed repack index $index size after: $index_size_after MB"
+                    db_maintenance_benefit=$((db_maintenance_benefit+index_size_before-index_size_after))
                 sleep 2s
                 done
             # if postgres >= 12 use reindex concurrently
             elif [[ $PG_VERSION -ge 12 ]]; then
                 for index in $bloat_indexes; do
+                    if [[ $per_db_failed_indexes -ge $FAILED_PER_DB_THRESHOLD ]]; then
+                        warnmsg "Index maintenance for database: $db exceeded $FAILED_PER_DB_THRESHOLD failed indexes. Skipping."
+                        break
+                    fi
                     pg_isready
                     maintenance_window
                     index_size_before=`check_index_size $index`
                     info "  started reindex index $index size: $index_size_before MB"
-                    if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAXc 'REINDEX INDEX CONCURRENTLY $index' 1> /dev/null";
-                    then
-                        # If the index marked INVALID is suffixed ccnew, then it corresponds to the transient index created during the concurrent operation, and the recommended recovery method is to drop it using DROP INDEX 
-                        invalid_index=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d "$db" -tAXc "SELECT quote_ident(schemaname)||'.'||quote_ident(indexrelname) as invalid_index FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND quote_ident(schemaname)||'.'||quote_ident(indexrelname) = '${index}_ccnew'")
-                        if [ -n "$invalid_index" ]; then
-                            warnmsg "  drop invalid index $invalid_index"
-                            if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAXc 'DROP INDEX CONCURRENTLY $invalid_index' 1> /dev/null";
-                            then
-                                warnmsg "  failed to drop invalid index $invalid_index"
-                                warnmsg "The index marked INVALID with the suffixed ccnew corresponds to the transient index created during the concurrent operation, and the recommended recovery method is to drop it using DROP INDEX CONCURRENTLY and try the pg_auto_reindexer again."
+                    for delay in 0 10 30 60
+                    do
+                        sleep $delay
+                        if bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAXc 'REINDEX INDEX CONCURRENTLY $index' 1> /dev/null" 2>&1 | warnmsg; then
+                            break
+                        else
+                            invalid_index=$(psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d "$db" -tAXc "SELECT quote_ident(schemaname)||'.'||quote_ident(indexrelname) as invalid_index FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND quote_ident(schemaname)||'.'||quote_ident(indexrelname) = '${index}_ccnew'")
+                            if [ -n "$invalid_index" ]; then
+                                warnmsg "  drop invalid index $invalid_index"
+                                if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAXc 'DROP INDEX CONCURRENTLY $invalid_index' 1> /dev/null";
+                                then
+                                    warnmsg "  failed to drop invalid index $invalid_index"
+                                    warnmsg "The index marked INVALID with the suffixed ccnew corresponds to the transient index created during the concurrent operation, and the recommended recovery method is to drop it using DROP INDEX CONCURRENTLY and try the pg_auto_reindexer again."
+                                fi
                             fi
+                            if [[ $delay -eq 60 ]]; then
+                                warnmsg "  failed to reindex index $index after all attempts. Skipping"
+                                per_db_failed_indexes=$((per_db_failed_indexes+1))
+                                continue 2
+                            fi
+                            warnmsg "  failed reindex index $index. Retrying"
                         fi
-                        warnmsg "   failed to reindex index $index"
-                        errmsg "Index maintenance for database: $db - Failed"
-                    fi
+                    done
                     index_size_after=`check_index_size $index`
                     info "  completed reindex index $index size after: $index_size_after MB"
                     db_maintenance_benefit=$((db_maintenance_benefit+index_size_before-index_size_after))
                 sleep 2s
                 done
             fi
-            total_maintenance_benefit=$((total_maintenance_benefit+db_maintenance_benefit))
             info "Completed index maintenance for database: $db"
             info "Totally released for database $db - $db_maintenance_benefit MB"
         fi
     fi
+    total_maintenance_benefit=$((total_maintenance_benefit+db_maintenance_benefit))
 done
 info "Totally released during maintenance - $total_maintenance_benefit MB"
-
 exit
