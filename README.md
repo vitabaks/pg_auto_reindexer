@@ -5,7 +5,7 @@ This script is designed to search and automatically repacking (reindex) Bloat in
 
 #### Example
 ```
-pg_auto_reindexer --index_bloat=20 --index_maxsize=5000 --maintenance_start=0100 --maintenance_stop=0600
+pg_auto_reindexer --index_bloat=20 --maintenance_start=0100 --maintenance_stop=0600
 ```
 
 #### pg_auto_reindexer --help
@@ -13,41 +13,52 @@ pg_auto_reindexer --index_bloat=20 --index_maxsize=5000 --maintenance_start=0100
 pg_auto_reindexer - Automatic reindexing of B-tree indexes
 
 --pghost=
-        PostgreSQL host (default: /var/run/postgresql)
+    PostgreSQL host (default: /var/run/postgresql)
 
 --pgport=
-        PostgreSQL port (default: 5432)
+    PostgreSQL port (default: 5432)
 
 --dbname=
-        PostgreSQL database (default: all databases)
+    PostgreSQL database (default: all databases)
 
 --dbuser=
-        PostgreSQL database user name (default: postgres)
+    PostgreSQL database user name (default: postgres)
 
 --index_bloat=
-        Index bloat in % (default: 30)
+    Index bloat in % (default: 30)
 
 --index_minsize=
-        Minimum index size in MB (default: 1)
-        Exclude indexes less than specified size
+    Minimum index size in MB (default: 1)
+    Exclude indexes less than specified size
 
 --index_maxsize=
-        Maximum index size in MB (default: 1000000)
-        Exclude indexes larger than specified size
+    Maximum index size in MB (default: 1000000)
+    Exclude indexes larger than specified size
 
 --maintenance_start=HHMM --maintenance_stop=HHMM
-        Determine the time range of the maintenance window (24 hour format: %H%M) [ optional ]
-        Example: 2200 (22 hours 00 minutes)
+    Determine the time range of the maintenance window (24 hour format: %H%M) [ optional ]
+    Example: 2200 (22 hours 00 minutes)
 
 --bloat_search_method=
-        estimate - index bloat estimation (default)
-        pgstattuple - use pgstattuple extension to search bloat indexes (could cause I/O spikes) [ optional ]
+    estimate - index bloat estimation (default)
+    pgstattuple - use pgstattuple extension to search bloat indexes (could cause I/O spikes) [ optional ]
+
+--failed_per_db_threshold=
+    If set, script will keep running for specific database, until more than this number of indexes fail to reindex.
+    After reaching threshold - script moves to next database (default: 1)
 
 -h, --help
-        show this help, then exit
+    show this help, then exit
 
 -V, --version
-        output version information, then exit
+    output version information, then exit
+
+Examples:
+  pg_auto_reindexer --index_bloat=20 --maintenance_start=0100 --maintenance_stop=0600
+
+Dependencies:
+  postgresql-<version>-repack package (for postgresql <= 11)
+
 ```
 
 ## Compatibility
