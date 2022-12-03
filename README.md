@@ -43,9 +43,10 @@ pg_auto_reindexer - Automatic reindexing of B-tree indexes
     estimate - index bloat estimation (default)
     pgstattuple - use pgstattuple extension to search bloat indexes (could cause I/O spikes) [ optional ]
 
---failed_per_db_threshold=
-    If set, script will keep running for specific database, until more than this number of indexes fail to reindex.
-    After reaching threshold - script moves to next database (default: 1)
+--failed_reindex_limit=
+    The maximum number of reindex errors during database maintenance (default: 1)
+    Example: canceling statement due to lock timeout
+    After reaching the limit - the script moves to the next database.
 
 -h, --help
     show this help, then exit

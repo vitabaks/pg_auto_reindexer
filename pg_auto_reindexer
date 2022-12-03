@@ -37,8 +37,8 @@ while getopts ":-:" optchar; do
     maintenance_stop=* )
       MAINTENANCE_STOP=${OPTARG#*=}
       ;;
-    failed_per_db_threshold=* )
-      FAILED_PER_DB_THRESHOLD=${OPTARG#*=}
+    failed_reindex_limit* )
+      FAILED_REINDEX_LIMIT=${OPTARG#*=}
       ;;
   esac
 done
@@ -78,9 +78,10 @@ $(basename "$0") - Automatic reindexing of B-tree indexes
     estimate - index bloat estimation (default)
     pgstattuple - use pgstattuple extension to search bloat indexes (could cause I/O spikes) [ optional ]
 
-\e[1m--failed_per_db_threshold=\e[0m
-    If set, script will keep running for specific database, until more than this number of indexes fail to reindex.
-    After reaching threshold - script moves to next database (default: 1)
+\e[1m--failed_reindex_limit=\e[0m
+    The maximum number of reindex errors during database maintenance (default: 1)
+    Example: canceling statement due to lock timeout
+    After reaching the limit - the script moves to the next database.
 
 -h, --help
     show this help, then exit
@@ -143,7 +144,7 @@ if [[ -z $INDEX_BLOAT ]]; then INDEX_BLOAT="30"; fi
 if [[ -z $BLOAT_SEARCH_METHOD ]]; then BLOAT_SEARCH_METHOD="estimate"; fi
 if [[ -z $INDEX_MINSIZE ]]; then INDEX_MINSIZE="1"; fi
 if [[ -z $INDEX_MAXSIZE ]]; then INDEX_MAXSIZE="1000000"; fi
-if [[ -z $FAILED_PER_DB_THRESHOLD ]]; then FAILED_PER_DB_THRESHOLD="1"; fi
+if [[ -z $FAILED_REINDEX_LIMIT ]]; then FAILED_REINDEX_LIMIT="1"; fi
 
 PG_VERSION=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d $(echo ${DBNAME}|awk '{print $1}') -tAXc "select setting::integer/10000 from pg_settings where name = 'server_version_num'")
 
@@ -333,14 +334,14 @@ for db in $DBNAME; do
       info "  no bloat indexes were found"
       info "Completed index maintenance for database: $db"
     else
-      per_db_failed_indexes=0
+      failed_reindex_count=0
       # if postgres <= 11 use pg_repack
       if [[ $PG_VERSION -le 11 ]]; then
         create_extension_pg_repack
         for index in $bloat_indexes; do
           retry_n=0
-          if [[ $per_db_failed_indexes -ge $FAILED_PER_DB_THRESHOLD ]]; then
-            warnmsg "Index maintenance for database: $db exceeded $FAILED_PER_DB_THRESHOLD failed index repacking. Skipping."
+          if [[ $failed_reindex_count -ge $FAILED_REINDEX_LIMIT ]]; then
+            warnmsg "Index maintenance for database: $db exceeded $FAILED_REINDEX_LIMIT failed index repacking. Skipping."
             break
           fi
           pg_isready
@@ -362,7 +363,7 @@ for db in $DBNAME; do
               # Skipping repack after all attempts
               if [[ $delay -eq 60 ]]; then
                 warnmsg "  failed to repack index \"$index\" after all attempts. Skipping"
-                per_db_failed_indexes=$((per_db_failed_indexes+1))
+                failed_reindex_count=$((failed_reindex_count+1))
                 continue 2
               fi
             fi
@@ -381,8 +382,8 @@ for db in $DBNAME; do
       elif [[ $PG_VERSION -ge 12 ]]; then
         for index in $bloat_indexes; do
           retry_n=0
-          if [[ $per_db_failed_indexes -ge $FAILED_PER_DB_THRESHOLD ]]; then
-            warnmsg "Index maintenance for database: $db exceeded $FAILED_PER_DB_THRESHOLD failed reindex. Skipping."
+          if [[ $failed_reindex_count -ge $FAILED_REINDEX_LIMIT ]]; then
+            warnmsg "Index maintenance for database: $db exceeded $FAILED_REINDEX_LIMIT failed reindex. Skipping."
             break
           fi
           pg_isready
@@ -412,7 +413,7 @@ for db in $DBNAME; do
               # Skipping reindex after all attempts
               if [[ $delay -eq 60 ]]; then
                 warnmsg "  failed to reindex index \"$index\" after all attempts. Skipping"
-                per_db_failed_indexes=$((per_db_failed_indexes+1))
+                failed_reindex_count=$((failed_reindex_count+1))
                 continue 2
               fi
             fi
@@ -424,7 +425,7 @@ for db in $DBNAME; do
     fi
   fi
   total_maintenance_benefit=$((total_maintenance_benefit+db_maintenance_benefit))
-  if [[ -n "$bloat_indexes" ]] && [[ $per_db_failed_indexes -eq 0 ]]; then
+  if [[ -n "$bloat_indexes" ]] && [[ $failed_reindex_count -eq 0 ]]; then
     info "Completed index maintenance for database: $db (released: $db_maintenance_benefit MB)"
   fi
 done
