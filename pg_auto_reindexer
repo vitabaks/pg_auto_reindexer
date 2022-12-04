@@ -425,7 +425,7 @@ for db in $DBNAME; do
     fi
   fi
   total_maintenance_benefit=$((total_maintenance_benefit+db_maintenance_benefit))
-  if [[ -n "$bloat_indexes" ]] && [[ $failed_reindex_count -eq 0 ]]; then
+  if [[ -n "$bloat_indexes" ]] && [[ $failed_reindex_count -lt $FAILED_REINDEX_LIMIT ]]; then
     info "Completed index maintenance for database: $db (released: $db_maintenance_benefit MB)"
   fi
 done
