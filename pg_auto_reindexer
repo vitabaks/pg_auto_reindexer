@@ -325,6 +325,7 @@ maintenance_window
 # REINDEX
 total_maintenance_benefit=0
 for db in $DBNAME; do
+  invalid_indexes_count=0
   db_maintenance_benefit=0
   if pg_isready; then
     create_extension_pgstattuple
@@ -359,6 +360,15 @@ for db in $DBNAME; do
               info "  completed repack index $index (size after: $index_size_after MB)"
               break
             else
+              # check for invalid temporary indexes with the suffix "index_"
+              invalid_index=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$db" -tAXc "SELECT string_agg(quote_ident(schemaname)||'.'||quote_ident(indexrelname), ', ') FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname like 'index_%'")
+              if [ -n "$invalid_index" ]; then
+                invalid_indexes_count=$((invalid_indexes_count+1))
+                warnmsg "  A temporary index apparently created by pg_repack has been left behind, and we do not want to risk dropping this index ourselves."
+                warnmsg "  If the index was in fact created by an old pg_repack job which didn't get cleaned up, you should just use DROP INDEX CONCURRENTLY and try the pg_auto_reindexer again."
+                warnmsg "  failed to repack index \"$index\". Skipping"
+                continue 2
+              fi
               retry_n=$((retry_n+1))
               # Skipping repack after all attempts
               if [[ $delay -eq 60 ]]; then
@@ -368,13 +378,6 @@ for db in $DBNAME; do
               fi
             fi
           done
-          # check for invalid temporary indexes with the suffix "index_"
-          invalid_index=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$db" -tAXc "SELECT string_agg(quote_ident(schemaname)||'.'||quote_ident(indexrelname), ', ') FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname like 'index_%'")
-          if [ -n "$invalid_index" ]; then
-            warnmsg "A temporary index apparently created by pg_repack has been left behind, and we do not want to risk dropping this index ourselves. If the index was in fact created by an old pg_repack job which didn't get cleaned up, you should just use DROP INDEX CONCURRENTLY and try the pg_auto_reindexer again."
-            warnmsg "invalid indexes: $invalid_index"
-            continue 2
-          fi
           db_maintenance_benefit=$((db_maintenance_benefit+index_size_before-index_size_after))
         sleep 2s
         done
@@ -427,6 +430,12 @@ for db in $DBNAME; do
   total_maintenance_benefit=$((total_maintenance_benefit+db_maintenance_benefit))
   if [[ -n "$bloat_indexes" ]] && [[ $failed_reindex_count -lt $FAILED_REINDEX_LIMIT ]]; then
     info "Completed index maintenance for database: $db (released: $db_maintenance_benefit MB)"
+  fi
+  if [[ $invalid_indexes_count -gt 0 ]]; then
+    invalid_index=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$db" -tAXc "SELECT string_agg(quote_ident(schemaname)||'.'||quote_ident(indexrelname), ', ') FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname like 'index_%'")
+    info "A temporary index(es) apparently created by pg_repack has been left behind, and we do not want to risk dropping this index ourselves."
+    info "If the index was in fact created by an old pg_repack job which didn't get cleaned up, you should just use DROP INDEX CONCURRENTLY and try the pg_auto_reindexer again."
+    info "Invalid index(es): $invalid_index" 
   fi
 done
 info "Total amount released during maintenance: $total_maintenance_benefit MB"
