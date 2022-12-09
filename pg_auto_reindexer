@@ -365,6 +365,7 @@ for db in $DBNAME; do
                 warnmsg "  A temporary index apparently created by pg_repack has been left behind, and we do not want to risk dropping this index ourselves."
                 warnmsg "  If the index was in fact created by an old pg_repack job which didn't get cleaned up, you should just use DROP INDEX CONCURRENTLY and try the pg_auto_reindexer again."
                 warnmsg "  failed to repack index \"$index\". Skipping"
+                failed_reindex_count=$((failed_reindex_count+1))
                 continue 2
               fi
               retry_n=$((retry_n+1))
