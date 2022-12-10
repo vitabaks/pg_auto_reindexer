@@ -362,8 +362,7 @@ for db in $DBNAME; do
               # check for invalid temporary indexes with the suffix "index_"
               invalid_index=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$db" -tAXc "SELECT string_agg(quote_ident(schemaname)||'.'||quote_ident(indexrelname), ', ') FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname like 'index_%'")
               if [ -n "$invalid_index" ]; then
-                warnmsg "  A temporary index apparently created by pg_repack has been left behind, and we do not want to risk dropping this index ourselves."
-                warnmsg "  If the index was in fact created by an old pg_repack job which didn't get cleaned up, you should just use DROP INDEX CONCURRENTLY and try the pg_auto_reindexer again."
+                warnmsg "  A temporary index apparently created by pg_repack has been left behind."
                 warnmsg "  failed to repack index \"$index\". Skipping"
                 failed_reindex_count=$((failed_reindex_count+1))
                 continue 2
@@ -430,11 +429,12 @@ for db in $DBNAME; do
   if [[ -n "$bloat_indexes" ]] && [[ $failed_reindex_count -lt $FAILED_REINDEX_LIMIT ]]; then
     info "Completed index maintenance for database: $db (released: $db_maintenance_benefit MB)"
   fi
-  invalid_index=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$db" -tAXc "SELECT string_agg(quote_ident(schemaname)||'.'||quote_ident(indexrelname), ', ') FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname like 'index_%'")
-  if [ -n "$invalid_index" ]; then
+  invalid_index_drop_commands=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$db" -tAXc "SELECT string_agg('DROP INDEX CONCURRENTLY '||quote_ident(schemaname)||'.'||quote_ident(indexrelname), '; ')||';' FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname like 'index_%'")
+  if [ -n "$invalid_index_drop_commands" ]; then
     info "A temporary index(es) apparently created by pg_repack has been left behind, and we do not want to risk dropping this index ourselves."
-    info "If the index was in fact created by an old pg_repack job which didn't get cleaned up, you should just use DROP INDEX CONCURRENTLY and try the pg_auto_reindexer again."
-    info "Invalid index(es): $invalid_index" 
+    info "If the index was in fact created by an old pg_repack job which didn't get cleaned up, you should just use next commands:"
+    info "$invalid_index_drop_commands" 
+    info "and run pg_auto_reindexer again."
   fi
 done
 info "Total amount released during maintenance: $total_maintenance_benefit MB"
