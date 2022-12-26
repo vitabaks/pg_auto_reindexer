@@ -139,7 +139,7 @@ function errmsg(){
 if [[ -z $PGHOST ]]; then PGHOST="/var/run/postgresql"; fi
 if [[ -z $PGPORT ]]; then PGPORT="5432"; fi
 if [[ -z $DBUSER ]]; then DBUSER="postgres"; fi
-if [[ -z $DBNAME ]]; then if ! DBNAME=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d postgres -tAc "select datname from pg_database where not datistemplate"); then errmsg "Unable to connect to database postgres on ${PGHOST}:${PGPORT} "; fi; fi
+if [[ -z $DBNAME ]]; then if ! DBNAME=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d postgres -tAXc "select datname from pg_database where not datistemplate"); then errmsg "Unable to connect to database postgres on ${PGHOST}:${PGPORT} "; fi; fi
 if [[ -z $INDEX_BLOAT ]]; then INDEX_BLOAT="30"; fi
 if [[ -z $BLOAT_SEARCH_METHOD ]]; then BLOAT_SEARCH_METHOD="estimate"; fi
 if [[ -z $INDEX_MINSIZE ]]; then INDEX_MINSIZE="1"; fi
