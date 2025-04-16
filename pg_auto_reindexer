@@ -146,14 +146,14 @@ if [[ -z $INDEX_MINSIZE ]]; then INDEX_MINSIZE="1"; fi
 if [[ -z $INDEX_MAXSIZE ]]; then INDEX_MAXSIZE="1000000"; fi
 if [[ -z $FAILED_REINDEX_LIMIT ]]; then FAILED_REINDEX_LIMIT="1"; fi
 
-PG_VERSION=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$(echo "${DBNAME}" | awk '{print $1}')" -tAXc "select setting::integer/10000 from pg_settings where name = 'server_version_num'")
+PG_VERSION=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc "select setting::integer/10000 from pg_settings where name = 'server_version_num'")
 
 function pg_isready(){
-  if ! psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$(echo "${DBNAME}" | awk '{print $1}')" -tAXc "select 1" 1> /dev/null; then
+  if ! psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc "select 1" 1> /dev/null; then
     errmsg "PostgreSQL server ${PGHOST}:${PGPORT} no response"
   else
   # in recovery mode?
-  state=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$(echo "${DBNAME}" | awk '{print $1}')" -tAXc 'SELECT pg_is_in_recovery()') 2>/dev/null
+  state=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc 'SELECT pg_is_in_recovery()') 2>/dev/null
     if [ "$state" = "t" ]; then
       warnmsg "This server is in recovery mode. Index maintenance will not be performed on that server."
       exit
