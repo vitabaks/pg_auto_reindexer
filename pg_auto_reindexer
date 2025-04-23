@@ -37,7 +37,7 @@ while getopts ":-:" optchar; do
     maintenance_stop=* )
       MAINTENANCE_STOP=${OPTARG#*=}
       ;;
-    failed_reindex_limit* )
+    failed_reindex_limit=* )
       FAILED_REINDEX_LIMIT=${OPTARG#*=}
       ;;
   esac
@@ -100,6 +100,18 @@ exit
 [ "$1" = "-v" ] || [ "$1" = "-V" ] || [ "$1" = "-version" ] || [ "$1" = "--version" ] && echo "$(basename "$0") v${version}" && exit
 [ "$1" = "-h" ] || [ "$1" = "help" ] || [ "$1" = "-help" ] || [ "$1" = "--help" ] && help
 
+if [[ -z $PGHOST ]]; then PGHOST="/var/run/postgresql"; fi
+if [[ -z $PGPORT ]]; then PGPORT="5432"; fi
+if [[ -z $DBUSER ]]; then DBUSER="postgres"; fi
+if [[ -z $DBNAME ]]; then if ! DBNAME=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d postgres -tAXc "select datname from pg_database where not datistemplate"); then errmsg "Unable to connect to database postgres on ${PGHOST}:${PGPORT} "; fi; fi
+if [[ -z $INDEX_BLOAT ]]; then INDEX_BLOAT="30"; fi
+if [[ -z $BLOAT_SEARCH_METHOD ]]; then BLOAT_SEARCH_METHOD="estimate"; fi
+if [[ -z $INDEX_MINSIZE ]]; then INDEX_MINSIZE="1"; fi
+if [[ -z $INDEX_MAXSIZE ]]; then INDEX_MAXSIZE="1000000"; fi
+if [[ -z $FAILED_REINDEX_LIMIT ]]; then FAILED_REINDEX_LIMIT="0"; fi
+
+PG_VERSION=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc "select setting::integer/10000 from pg_settings where name = 'server_version_num'")
+
 function info(){
   if [ -n "$1" ]; then
     msg="$1"
@@ -135,18 +147,6 @@ function errmsg(){
   logger -p user.error -t "$(basename "$0")" "$msg"
   exit 1
 }
-
-if [[ -z $PGHOST ]]; then PGHOST="/var/run/postgresql"; fi
-if [[ -z $PGPORT ]]; then PGPORT="5432"; fi
-if [[ -z $DBUSER ]]; then DBUSER="postgres"; fi
-if [[ -z $DBNAME ]]; then if ! DBNAME=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d postgres -tAXc "select datname from pg_database where not datistemplate"); then errmsg "Unable to connect to database postgres on ${PGHOST}:${PGPORT} "; fi; fi
-if [[ -z $INDEX_BLOAT ]]; then INDEX_BLOAT="30"; fi
-if [[ -z $BLOAT_SEARCH_METHOD ]]; then BLOAT_SEARCH_METHOD="estimate"; fi
-if [[ -z $INDEX_MINSIZE ]]; then INDEX_MINSIZE="1"; fi
-if [[ -z $INDEX_MAXSIZE ]]; then INDEX_MAXSIZE="1000000"; fi
-if [[ -z $FAILED_REINDEX_LIMIT ]]; then FAILED_REINDEX_LIMIT="0"; fi
-
-PG_VERSION=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc "select setting::integer/10000 from pg_settings where name = 'server_version_num'")
 
 function pg_isready(){
   if ! psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc "select 1" 1> /dev/null; then
