@@ -79,8 +79,8 @@ $(basename "$0") - Automatic reindexing of B-tree indexes
     pgstattuple - use pgstattuple extension to search bloat indexes (could cause I/O spikes) [ optional ]
 
 \e[1m--failed_reindex_limit=\e[0m
-    Maximum allowed number of failed reindex operations per database. Default: 0 (disabled).  
-    Example failure: "canceling statement due to lock timeout".  
+    Maximum allowed number of failed reindex operations per database. Default: 0 (disabled).
+    Example failure: "canceling statement due to lock timeout".
     When the limit is reached, the script skips the current database and continues with the next one.
 
 -h, --help
