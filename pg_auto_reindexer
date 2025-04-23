@@ -196,7 +196,9 @@ select format('%I.%I', schemaname, indexrelname) as index_full_name
 from (
   select schemaname, indexrelname,
   (select (case when avg_leaf_density = 'NaN' then 0
-    else greatest(ceil(index_size * (1 - avg_leaf_density / (coalesce((SELECT (regexp_matches(reloptions::text, E'.*fillfactor=(\\d+).*'))[1]),'90')::real)))::bigint, 0) end)
+    else greatest(ceil(index_size * (1 - avg_leaf_density / (
+      coalesce((select (regexp_matches(reloptions::text, E'.*fillfactor=(\\d+).*'))[1]),'90')::real)))::bigint, 0)
+    end)
     from pgstatindex(p.indexrelid::regclass::text)
   ) as free_space,
   pg_relation_size(p.indexrelid) as index_size
