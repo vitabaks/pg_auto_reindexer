@@ -206,12 +206,12 @@ from (
   join pg_class c on p.indexrelid = c.oid
   join pg_index i on i.indexrelid = p.indexrelid
   where pg_get_indexdef(p.indexrelid) like '%USING btree%'
-  and i.indisvalid and c.relpersistence = 'p'
-  and pg_relation_size(p.indexrelid)/1024/1024 >= ${INDEX_MINSIZE}
-  and pg_relation_size(p.indexrelid)/1024/1024 <= ${INDEX_MAXSIZE}
-  and schemaname <> 'pg_catalog' -- exclude system catalog
+    and i.indisvalid
+    and c.relpersistence = 'p'
+    and schemaname <> 'pg_catalog' -- exclude system catalog
 ) t
 where round((free_space*100/index_size)::numeric, 1) >= ${INDEX_BLOAT}
+  and index_size::bigint/1024/1024 between ${INDEX_MINSIZE} and ${INDEX_MAXSIZE}
 order by index_size asc;
 "
 elif [[ "${BLOAT_SEARCH_METHOD}" = "estimate" ]]; then
