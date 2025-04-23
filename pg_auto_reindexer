@@ -79,9 +79,9 @@ $(basename "$0") - Automatic reindexing of B-tree indexes
     pgstattuple - use pgstattuple extension to search bloat indexes (could cause I/O spikes) [ optional ]
 
 \e[1m--failed_reindex_limit=\e[0m
-    The maximum number of reindex errors during database maintenance (default: 1)
-    Example: canceling statement due to lock timeout
-    After reaching the limit - the script moves to the next database.
+    Maximum allowed number of failed reindex operations per database. Default: 0 (disabled).  
+    Example failure: "canceling statement due to lock timeout".  
+    When the limit is reached, the script skips the current database and continues with the next one.
 
 -h, --help
     show this help, then exit
@@ -144,7 +144,7 @@ if [[ -z $INDEX_BLOAT ]]; then INDEX_BLOAT="30"; fi
 if [[ -z $BLOAT_SEARCH_METHOD ]]; then BLOAT_SEARCH_METHOD="estimate"; fi
 if [[ -z $INDEX_MINSIZE ]]; then INDEX_MINSIZE="1"; fi
 if [[ -z $INDEX_MAXSIZE ]]; then INDEX_MAXSIZE="1000000"; fi
-if [[ -z $FAILED_REINDEX_LIMIT ]]; then FAILED_REINDEX_LIMIT="1"; fi
+if [[ -z $FAILED_REINDEX_LIMIT ]]; then FAILED_REINDEX_LIMIT="0"; fi
 
 PG_VERSION=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc "select setting::integer/10000 from pg_settings where name = 'server_version_num'")
 
@@ -340,7 +340,7 @@ for db in $DBNAME; do
         create_extension_pg_repack
         for index in $bloat_indexes; do
           retry_n=0
-          if [[ $failed_reindex_count -ge $FAILED_REINDEX_LIMIT ]]; then
+          if [[ "$FAILED_REINDEX_LIMIT" -ne 0 && $failed_reindex_count -ge $FAILED_REINDEX_LIMIT ]]; then
             warnmsg "Index maintenance for database: $db exceeded $FAILED_REINDEX_LIMIT failed index repacking. Skipping."
             break
           fi
@@ -383,7 +383,7 @@ for db in $DBNAME; do
       elif [[ $PG_VERSION -ge 12 ]]; then
         for index in $bloat_indexes; do
           retry_n=0
-          if [[ $failed_reindex_count -ge $FAILED_REINDEX_LIMIT ]]; then
+          if [[ "$FAILED_REINDEX_LIMIT" -ne 0 && $failed_reindex_count -ge $FAILED_REINDEX_LIMIT ]]; then
             warnmsg "Index maintenance for database: $db exceeded $FAILED_REINDEX_LIMIT failed reindex. Skipping."
             break
           fi
