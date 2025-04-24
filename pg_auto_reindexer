@@ -43,6 +43,41 @@ while getopts ":-:" optchar; do
   esac
 done
 
+# === Default variables ===
+
+if [[ -z $PGHOST ]]; then PGHOST="/var/run/postgresql"; fi
+if [[ -z $PGPORT ]]; then PGPORT="5432"; fi
+if [[ -z $DBUSER ]]; then DBUSER="postgres"; fi
+if [[ -z $INDEX_BLOAT ]]; then INDEX_BLOAT="30"; fi
+if [[ -z $BLOAT_SEARCH_METHOD ]]; then BLOAT_SEARCH_METHOD="estimate"; fi
+if [[ -z $INDEX_MINSIZE ]]; then INDEX_MINSIZE="1"; fi
+if [[ -z $INDEX_MAXSIZE ]]; then INDEX_MAXSIZE="1000000"; fi
+if [[ -z $FAILED_REINDEX_LIMIT ]]; then FAILED_REINDEX_LIMIT="0"; fi
+
+_PSQL="psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER}"
+
+if [[ -z $DBNAME ]]; then
+  if ! DBNAME=$(${_PSQL} -d postgres -tAXc "select datname from pg_database where not datistemplate"); then
+    errmsg "Unable to connect to database postgres on ${PGHOST}:${PGPORT}"
+  fi
+fi
+
+PG_VERSION=$(
+  $_PSQL \
+    -d "$(echo "${DBNAME}" | awk 'NR==1')" \
+    -tAXc "select setting::integer/10000 from pg_settings where name = 'server_version_num'"
+)
+
+# disable statement_timeout and set lock_timeout
+PGOPTIONS="-c statement_timeout=0 -c lock_timeout=1s"
+
+# disable parallel maintenance workers
+if [[ $PG_VERSION -ge 11 ]]; then
+  PGOPTIONS+=" -c max_parallel_maintenance_workers=0"
+fi
+
+# === Functions ===
+
 function help(){
 echo -e "
 $(basename "$0") - Automatic reindexing of B-tree indexes
@@ -100,18 +135,6 @@ exit
 [ "$1" = "-v" ] || [ "$1" = "-V" ] || [ "$1" = "-version" ] || [ "$1" = "--version" ] && echo "$(basename "$0") v${version}" && exit
 [ "$1" = "-h" ] || [ "$1" = "help" ] || [ "$1" = "-help" ] || [ "$1" = "--help" ] && help
 
-if [[ -z $PGHOST ]]; then PGHOST="/var/run/postgresql"; fi
-if [[ -z $PGPORT ]]; then PGPORT="5432"; fi
-if [[ -z $DBUSER ]]; then DBUSER="postgres"; fi
-if [[ -z $DBNAME ]]; then if ! DBNAME=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d postgres -tAXc "select datname from pg_database where not datistemplate"); then errmsg "Unable to connect to database postgres on ${PGHOST}:${PGPORT} "; fi; fi
-if [[ -z $INDEX_BLOAT ]]; then INDEX_BLOAT="30"; fi
-if [[ -z $BLOAT_SEARCH_METHOD ]]; then BLOAT_SEARCH_METHOD="estimate"; fi
-if [[ -z $INDEX_MINSIZE ]]; then INDEX_MINSIZE="1"; fi
-if [[ -z $INDEX_MAXSIZE ]]; then INDEX_MAXSIZE="1000000"; fi
-if [[ -z $FAILED_REINDEX_LIMIT ]]; then FAILED_REINDEX_LIMIT="0"; fi
-
-PG_VERSION=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc "select setting::integer/10000 from pg_settings where name = 'server_version_num'")
-
 function info(){
   if [ -n "$1" ]; then
     msg="$1"
@@ -149,11 +172,11 @@ function errmsg(){
 }
 
 function pg_isready(){
-  if ! psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc "select 1" 1> /dev/null; then
+  if ! ${_PSQL} -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc "select 1" 1> /dev/null; then
     errmsg "PostgreSQL server ${PGHOST}:${PGPORT} no response"
   else
   # in recovery mode?
-  state=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc 'SELECT pg_is_in_recovery()') 2>/dev/null
+  state=$(${_PSQL} -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc 'SELECT pg_is_in_recovery()') 2>/dev/null
     if [ "$state" = "t" ]; then
       warnmsg "This server is in recovery mode. Index maintenance will not be performed on that server."
       exit
@@ -163,16 +186,16 @@ function pg_isready(){
 
 function create_extension_pgstattuple(){
   if [[ "${BLOAT_SEARCH_METHOD}" = "pgstattuple" ]]; then
-    psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$db" -tAXc "create extension if not exists pgstattuple;" &>/dev/null
+    ${_PSQL} -d "$db" -tAXc "create extension if not exists pgstattuple;" &>/dev/null
   fi
 }
 
 function create_extension_pg_repack(){
-  psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$db" -tAXc "create extension if not exists pg_repack" &>/dev/null
+  ${_PSQL} -d "$db" -tAXc "create extension if not exists pg_repack" &>/dev/null
 }
 
 function check_index_size(){
-  psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$db" -tAXc "select pg_relation_size('$1')/1024/1024"
+  ${_PSQL} -d "$db" -tAXc "select pg_relation_size('$1')/1024/1024"
 }
 
 function maintenance_window(){
@@ -184,7 +207,6 @@ function maintenance_window(){
     fi
   fi
 }
-
 
 if [[ "${BLOAT_SEARCH_METHOD}" = "pgstattuple" ]]; then
 # Based on https://github.com/dataegret/pg-utils/blob/master/sql/index_bloat.sql
@@ -305,24 +327,19 @@ order by index_size asc;
 "
 fi
 
-# SET PGOPTIONS
-PGOPTIONS="-c statement_timeout=0 -c lock_timeout=1s"
-# disable parallel maintenance workers
-if [[ $PG_VERSION -ge 11 ]]; then
-PGOPTIONS+=" -c max_parallel_maintenance_workers=0"
-fi
+# === Main logic ===
 
 # Check current time
 maintenance_window
 
-# REINDEX
+# Run reindex
 total_maintenance_benefit=0
 for db in $DBNAME; do
   db_maintenance_benefit=0
   if pg_isready; then
     create_extension_pgstattuple
     info "Started index maintenance for database: $db"
-    bloat_indexes=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$db" -tAXc "$INDEX_BLOAT_SQL")
+    bloat_indexes=$(${_PSQL} -d "$db" -tAXc "$INDEX_BLOAT_SQL")
     if [[ -z "$bloat_indexes" ]]; then
       info "  no bloat indexes were found"
       info "Completed index maintenance for database: $db"
@@ -353,7 +370,7 @@ for db in $DBNAME; do
               break
             else
               # check for invalid temporary indexes with the suffix "index_"
-              invalid_index=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$db" -tAXc "SELECT string_agg(quote_ident(schemaname)||'.'||quote_ident(indexrelname), ', ') FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname like 'index_%'")
+              invalid_index=$(${_PSQL} -d "$db" -tAXc "SELECT string_agg(quote_ident(schemaname)||'.'||quote_ident(indexrelname), ', ') FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname like 'index_%'")
               if [ -n "$invalid_index" ]; then
                 warnmsg "  A temporary index apparently created by pg_repack has been left behind."
                 warnmsg "  failed to repack index \"$index\". Skipping"
@@ -397,7 +414,7 @@ for db in $DBNAME; do
             else
               retry_n=$((retry_n+1))
               # drop invalid index
-              invalid_index=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$db" -tAXc "SELECT quote_ident(schemaname)||'.'||quote_ident(indexrelname) as invalid_index FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND quote_ident(schemaname)||'.'||quote_ident(indexrelname) = '${index}_ccnew'")
+              invalid_index=$(${_PSQL} -d "$db" -tAXc "SELECT quote_ident(schemaname)||'.'||quote_ident(indexrelname) as invalid_index FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND quote_ident(schemaname)||'.'||quote_ident(indexrelname) = '${index}_ccnew'")
               if [[ -n "$invalid_index" ]]; then
                 if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAXc 'DROP INDEX CONCURRENTLY $invalid_index' &> /dev/null"; then
                   warnmsg "  failed to drop invalid index $invalid_index"
@@ -422,7 +439,7 @@ for db in $DBNAME; do
   if [[ -n "$bloat_indexes" ]] && [[ $failed_reindex_count -lt $FAILED_REINDEX_LIMIT ]]; then
     info "Completed index maintenance for database: $db (released: $db_maintenance_benefit MB)"
   fi
-  invalid_index_drop_commands=$(psql -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "$db" -tAXc "SELECT string_agg('DROP INDEX CONCURRENTLY '||quote_ident(schemaname)||'.'||quote_ident(indexrelname), '; ')||';' FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname like 'index_%'")
+  invalid_index_drop_commands=$(${_PSQL} -d "$db" -tAXc "SELECT string_agg('DROP INDEX CONCURRENTLY '||quote_ident(schemaname)||'.'||quote_ident(indexrelname), '; ')||';' FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname like 'index_%'")
   if [ -n "$invalid_index_drop_commands" ]; then
     info "A temporary index(es) apparently created by pg_repack has been left behind, and we do not want to risk dropping this index ourselves."
     info "If the index was in fact created by an old pg_repack job which didn't get cleaned up, you should just use next commands:"
