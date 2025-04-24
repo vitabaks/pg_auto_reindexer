@@ -1,44 +1,74 @@
 #!/usr/bin/env bash
 # Author: Vitaliy Kukharik (vitabaks@gmail.com)
-# Title: /usr/bin/pg_auto_reindexer - Automatic reindexing of B-tree indexes
+# Title: pg_auto_reindexer - Automatic reindexing of B-tree indexes
 
 version=1.4_dev
 
-while getopts ":-:" optchar; do
-  [[ "${optchar}" == "-" ]] || continue
-  case "${OPTARG}" in
-    pghost=* )
-      PGHOST=${OPTARG#*=}
-      ;;
-    pgport=* )
-      PGPORT=${OPTARG#*=}
-      ;;
-    dbname=* )
-      DBNAME=${OPTARG#*=}
-      ;;
-    dbuser=* )
-      DBUSER=${OPTARG#*=}
-      ;;
-    index_bloat=* )
-      INDEX_BLOAT=${OPTARG#*=}
-      ;;
-    index_minsize=* )
-      INDEX_MINSIZE=${OPTARG#*=}
-      ;;
-    index_maxsize=* )
-      INDEX_MAXSIZE=${OPTARG#*=}
-      ;;
-    bloat_search_method=* )
-      BLOAT_SEARCH_METHOD=${OPTARG#*=}
-      ;;
-    maintenance_start=* )
-      MAINTENANCE_START=${OPTARG#*=}
-      ;;
-    maintenance_stop=* )
-      MAINTENANCE_STOP=${OPTARG#*=}
-      ;;
-    failed_reindex_limit=* )
-      FAILED_REINDEX_LIMIT=${OPTARG#*=}
+# === Print help information ===
+
+function help() {
+cat <<EOF
+pg_auto_reindexer - Automatic reindexing of B-tree indexes
+
+Usage:
+  pg_auto_reindexer [OPTIONS]
+
+Connection options:
+  -h, --host=HOSTNAME               PostgreSQL host (default: /var/run/postgresql)
+  -p, --port=PORT                   PostgreSQL port (default: 5432)
+  -U, --username=USERNAME           PostgreSQL user (default: postgres)
+  -d, --dbname=DBNAME               PostgreSQL database for reindexing (default: all databases)
+
+Reindexing options:
+  -b, --index-bloat=PERCENT         Index bloat threshold in percent (default: 30)
+  -m, --index-minsize=MB            Minimum index size in MB (default: 1)
+  -M, --index-maxsize=MB            Maximum index size in MB (default: 1000000)
+  -s, --maintenance-start=HHMM      Maintenance window start (24h format)
+  -S, --maintenance-stop=HHMM       Maintenance window stop (24h format)
+  -t, --bloat-search-method=METHOD  Bloat detection method: estimate | pgstattuple (default: estimate)
+  -l, --failed-reindex-limit=N      Max reindex failures before skipping DB (default: 0)
+
+Other options:
+  -v, --version                     Show version information and exit
+  -?, --help                        Show this help message and exit
+
+Example:
+  pg_auto_reindexer --index-bloat=40 --maintenance-start=0100 --maintenance-stop=0600
+EOF
+exit
+}
+
+# === Argument parsing ===
+
+for arg in "$@"; do
+  if [[ "$arg" == --*=* ]]; then
+    opt="${arg%%=*}"
+    val="${arg#*=}"
+    newargs+=("$opt" "$val")
+  else
+    newargs+=("$arg")
+  fi
+done
+set -- "${newargs[@]}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--host)                  PGHOST="$2"; shift 2;;
+    -p|--port)                  PGPORT="$2"; shift 2;;
+    -d|--dbname)                DBNAME="$2"; shift 2;;
+    -U|--username)              DBUSER="$2"; shift 2;;
+    -b|--index-bloat)           INDEX_BLOAT="$2"; shift 2;;
+    -m|--index-minsize)         INDEX_MINSIZE="$2"; shift 2;;
+    -M|--index-maxsize)         INDEX_MAXSIZE="$2"; shift 2;;
+    -s|--maintenance-start)     MAINTENANCE_START="$2"; shift 2;;
+    -S|--maintenance-stop)      MAINTENANCE_STOP="$2"; shift 2;;
+    -t|--bloat-search-method)   BLOAT_SEARCH_METHOD="$2"; shift 2;;
+    -l|--failed-reindex-limit)  FAILED_REINDEX_LIMIT="$2"; shift 2;;
+    -v|--version)               echo "pg_auto_reindexer v${version}"; exit;;
+    -?|--help)                  help;;
+    *)
+      echo "Unknown option: $1"
+      help
       ;;
   esac
 done
@@ -77,63 +107,6 @@ if [[ $PG_VERSION -ge 11 ]]; then
 fi
 
 # === Functions ===
-
-function help(){
-echo -e "
-$(basename "$0") - Automatic reindexing of B-tree indexes
-
-\e[1m--pghost=\e[0m
-    PostgreSQL host (default: /var/run/postgresql)
-
-\e[1m--pgport=\e[0m
-    PostgreSQL port (default: 5432)
-
-\e[1m--dbname=\e[0m
-    PostgreSQL database (default: all databases)
-
-\e[1m--dbuser=\e[0m
-    PostgreSQL database user name (default: postgres)
-
-\e[1m--index_bloat=\e[0m
-    Index bloat in % (default: 30)
-
-\e[1m--index_minsize=\e[0m
-    Minimum index size in MB (default: 1)
-    Exclude indexes less than specified size
-
-\e[1m--index_maxsize=\e[0m
-    Maximum index size in MB (default: 1000000)
-    Exclude indexes larger than specified size
-
-\e[1m--maintenance_start=\e[0mHHMM \e[1m--maintenance_stop=\e[0mHHMM
-    Determine the time range of the maintenance window (24 hour format: %H%M) [ optional ]
-    Example: 2200 (22 hours 00 minutes)
-
-\e[1m--bloat_search_method=\e[0m
-    estimate - index bloat estimation (default)
-    pgstattuple - use pgstattuple extension to search bloat indexes (could cause I/O spikes) [ optional ]
-
-\e[1m--failed_reindex_limit=\e[0m
-    Maximum allowed number of failed reindex operations per database. Default: 0 (disabled).
-    Example failure: "canceling statement due to lock timeout".
-    When the limit is reached, the script skips the current database and continues with the next one.
-
--h, --help
-    show this help, then exit
-
--V, --version
-    output version information, then exit
-
-Examples:
-  $(basename "$0") --index_bloat=20 --maintenance_start=0100 --maintenance_stop=0600
-
-Dependencies:
-  postgresql-<version>-repack package (for postgresql <= 11)
-"
-exit
-}
-[ "$1" = "-v" ] || [ "$1" = "-V" ] || [ "$1" = "-version" ] || [ "$1" = "--version" ] && echo "$(basename "$0") v${version}" && exit
-[ "$1" = "-h" ] || [ "$1" = "help" ] || [ "$1" = "-help" ] || [ "$1" = "--help" ] && help
 
 function info(){
   if [ -n "$1" ]; then
