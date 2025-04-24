@@ -208,7 +208,7 @@ from (
   where pg_get_indexdef(p.indexrelid) like '%USING btree%'
     and i.indisvalid
     and c.relpersistence = 'p'
-    and schemaname <> 'pg_catalog' -- exclude system catalog
+    and schemaname <> 'pg_catalog'
 ) t
 where round((free_space*100/index_size)::numeric, 1) >= ${INDEX_BLOAT}
   and index_size::bigint/1024/1024 between ${INDEX_MINSIZE} and ${INDEX_MAXSIZE}
@@ -292,7 +292,7 @@ with bloat_indexes as (
         join pg_catalog.pg_stats s on s.schemaname = n.nspname
           and s.tablename = i.attrelname
           and s.attname = i.attname
-        where schemaname <> 'pg_catalog' -- exclude system catalog
+        where schemaname <> 'pg_catalog'
         group by 1,2,3,4,5,6,7,8,9,10,11
       ) as rows_data_stats
     ) as rows_hdr_pdg_stats
