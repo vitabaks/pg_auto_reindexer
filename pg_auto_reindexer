@@ -298,8 +298,7 @@ with bloat_indexes as (
     ) as rows_hdr_pdg_stats
   ) as relation_stats
 )
-select index_full_name
-from bloat_indexes
+select index_full_name from bloat_indexes
 where bloat_ratio >= ${INDEX_BLOAT}
   and index_size::bigint/1024/1024 between ${INDEX_MINSIZE} and ${INDEX_MAXSIZE}
 order by index_size asc;
