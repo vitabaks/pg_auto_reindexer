@@ -101,15 +101,15 @@ PG_VERSION=$(
     -tAXc "select setting::integer/10000 from pg_settings where name = 'server_version_num'"
 )
 
-# disable statement_timeout and set lock_timeout
+# Disable statement_timeout and set lock_timeout
 PGOPTIONS="-c statement_timeout=0 -c lock_timeout=1s"
 
-# disable parallel maintenance workers
+# Disable parallel maintenance workers
 if [[ $PG_VERSION -ge 11 ]]; then
   PGOPTIONS+=" -c max_parallel_maintenance_workers=0"
 fi
 
-
+# Index bloat detection query
 if [[ "${BLOAT_SEARCH_METHOD}" = "pgstattuple" ]]; then
 # Based on https://github.com/dataegret/pg-utils/blob/master/sql/index_bloat.sql
 INDEX_BLOAT_SQL="
@@ -242,6 +242,7 @@ function info(){
   echo -e "$(date "+%F %T") INFO: $msg"
   logger -p user.notice -t "$(basename "$0")" "$msg"
 }
+
 function warnmsg(){
   if [ -n "$1" ]; then
     msg="$1"
@@ -256,6 +257,7 @@ function warnmsg(){
   logger -p user.notice -t "$(basename "$0")" "$msg"
   return 1
 }
+
 function errmsg(){
   if [ -n "$1" ]; then
     msg="$1"
