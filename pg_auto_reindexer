@@ -109,81 +109,6 @@ if [[ $PG_VERSION -ge 11 ]]; then
   PGOPTIONS+=" -c max_parallel_maintenance_workers=0"
 fi
 
-# =================
-# === Functions ===
-# =================
-function info(){
-  if [ -n "$1" ]; then
-    msg="$1"
-  else
-    read -r msg
-    msg="  $msg"
-  fi
-  echo -e "$(date "+%F %T") INFO: $msg"
-  logger -p user.notice -t "$(basename "$0")" "$msg"
-}
-function warnmsg(){
-  if [ -n "$1" ]; then
-    msg="$1"
-  else
-    read -r msg
-    msg="  $msg"
-    if [[ $msg == "  " ]]; then
-      return 0
-    fi
-  fi
-  echo -e "$(date "+%F %T") WARN: $msg"
-  logger -p user.notice -t "$(basename "$0")" "$msg"
-  return 1
-}
-function errmsg(){
-  if [ -n "$1" ]; then
-    msg="$1"
-  else
-    read -r msg
-    msg="  $msg"
-  fi
-  echo -e "$(date "+%F %T") ERROR: $msg"
-  logger -p user.error -t "$(basename "$0")" "$msg"
-  exit 1
-}
-
-function pg_isready(){
-  if ! ${_PSQL} -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc "select 1" 1> /dev/null; then
-    errmsg "PostgreSQL server ${PGHOST}:${PGPORT} no response"
-  else
-  # in recovery mode?
-  state=$(${_PSQL} -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc 'SELECT pg_is_in_recovery()') 2>/dev/null
-    if [ "$state" = "t" ]; then
-      warnmsg "This server is in recovery mode. Index maintenance will not be performed on that server."
-      exit
-    fi
-  fi
-}
-
-function create_extension_pgstattuple(){
-  if [[ "${BLOAT_SEARCH_METHOD}" = "pgstattuple" ]]; then
-    ${_PSQL} -d "$db" -tAXc "create extension if not exists pgstattuple;" &>/dev/null
-  fi
-}
-
-function create_extension_pg_repack(){
-  ${_PSQL} -d "$db" -tAXc "create extension if not exists pg_repack" &>/dev/null
-}
-
-function check_index_size(){
-  ${_PSQL} -d "$db" -tAXc "select pg_relation_size('$1')/1024/1024"
-}
-
-function maintenance_window(){
-  if [ -n "${MAINTENANCE_START}" ] && [ -n "${MAINTENANCE_STOP}" ]; then
-    currentTime=$(date "+%H%M")
-    if [ "$currentTime" -lt "${MAINTENANCE_START}" ] || [ "$currentTime" -gt "${MAINTENANCE_STOP}" ]; then
-      warnmsg "Current time: $(date "+%R %Z"). This is outside of the maintenance window: $(date --date="${MAINTENANCE_START}" "+%R")-$(date --date="${MAINTENANCE_STOP}" "+%R"). Exit."
-      exit
-    fi
-  fi
-}
 
 if [[ "${BLOAT_SEARCH_METHOD}" = "pgstattuple" ]]; then
 # Based on https://github.com/dataegret/pg-utils/blob/master/sql/index_bloat.sql
@@ -304,6 +229,82 @@ order by index_size asc;
 "
 fi
 
+# =================
+# === Functions ===
+# =================
+function info(){
+  if [ -n "$1" ]; then
+    msg="$1"
+  else
+    read -r msg
+    msg="  $msg"
+  fi
+  echo -e "$(date "+%F %T") INFO: $msg"
+  logger -p user.notice -t "$(basename "$0")" "$msg"
+}
+function warnmsg(){
+  if [ -n "$1" ]; then
+    msg="$1"
+  else
+    read -r msg
+    msg="  $msg"
+    if [[ $msg == "  " ]]; then
+      return 0
+    fi
+  fi
+  echo -e "$(date "+%F %T") WARN: $msg"
+  logger -p user.notice -t "$(basename "$0")" "$msg"
+  return 1
+}
+function errmsg(){
+  if [ -n "$1" ]; then
+    msg="$1"
+  else
+    read -r msg
+    msg="  $msg"
+  fi
+  echo -e "$(date "+%F %T") ERROR: $msg"
+  logger -p user.error -t "$(basename "$0")" "$msg"
+  exit 1
+}
+
+function pg_isready(){
+  if ! ${_PSQL} -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc "select 1" 1> /dev/null; then
+    errmsg "PostgreSQL server ${PGHOST}:${PGPORT} no response"
+  else
+  # in recovery mode?
+  state=$(${_PSQL} -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc 'SELECT pg_is_in_recovery()') 2>/dev/null
+    if [ "$state" = "t" ]; then
+      warnmsg "This server is in recovery mode. Index maintenance will not be performed on that server."
+      exit
+    fi
+  fi
+}
+
+function create_extension_pgstattuple(){
+  if [[ "${BLOAT_SEARCH_METHOD}" = "pgstattuple" ]]; then
+    ${_PSQL} -d "$db" -tAXc "create extension if not exists pgstattuple;" &>/dev/null
+  fi
+}
+
+function create_extension_pg_repack(){
+  ${_PSQL} -d "$db" -tAXc "create extension if not exists pg_repack" &>/dev/null
+}
+
+function check_index_size(){
+  ${_PSQL} -d "$db" -tAXc "select pg_relation_size('$1')/1024/1024"
+}
+
+function maintenance_window(){
+  if [ -n "${MAINTENANCE_START}" ] && [ -n "${MAINTENANCE_STOP}" ]; then
+    currentTime=$(date "+%H%M")
+    if [ "$currentTime" -lt "${MAINTENANCE_START}" ] || [ "$currentTime" -gt "${MAINTENANCE_STOP}" ]; then
+      warnmsg "Current time: $(date "+%R %Z"). This is outside of the maintenance window: $(date --date="${MAINTENANCE_START}" "+%R")-$(date --date="${MAINTENANCE_STOP}" "+%R"). Exit."
+      exit
+    fi
+  fi
+}
+
 function process_index_repack() {
   local index="$1"
   local retry_n=0
@@ -340,6 +341,19 @@ function process_index_repack() {
         warnmsg "  failed to repack index \"$index\". Skipping"
         failed_reindex_count=$((failed_reindex_count + 1))
         return 1
+      fi
+
+      invalid_index_drop_commands=$(${_PSQL} -d "$db" -tAXc \
+        "select string_agg('DROP INDEX CONCURRENTLY '||format('%I.%I', schemaname, indexrelname), '; ')||';'
+         from pg_stat_user_indexes
+         join pg_index using(indexrelid)
+         where not indisvalid and indexrelname like 'index_%'")
+
+      if [ -n "$invalid_index_drop_commands" ]; then
+        info "A temporary index(es) apparently created by pg_repack has been left behind, and we do not want to risk dropping this index ourselves."
+        info "If the index was in fact created by an old pg_repack job which didn't get cleaned up, you should just use next commands:"
+        info "$invalid_index_drop_commands"
+        info "and run pg_auto_reindexer again."
       fi
 
       if [[ $delay -eq 60 ]]; then
@@ -405,7 +419,7 @@ function process_index_reindex() {
 # Check current time
 maintenance_window
 
-# Run reindex
+# Perform reindexing for each database
 total_maintenance_benefit=0
 for db in $DBNAME; do
   db_maintenance_benefit=0
@@ -413,12 +427,10 @@ for db in $DBNAME; do
   if pg_isready; then
     create_extension_pgstattuple
     info "Started index maintenance for database: $db"
+
     bloat_indexes=$(${_PSQL} -d "$db" -tAXc "$INDEX_BLOAT_SQL")
 
-    if [[ -z "$bloat_indexes" ]]; then
-      info "  no bloat indexes were found"
-      info "Completed index maintenance for database: $db"
-    else
+    if [[ -n "$bloat_indexes" ]]; then
       failed_reindex_count=0
 
       # if postgres <= 11 use pg_repack
@@ -447,23 +459,17 @@ for db in $DBNAME; do
           process_index_reindex "$index"
         done
       fi
+    else
+      info "  no bloat indexes were found"
+      info "Completed index maintenance for database: $db"
     fi
   fi
 
-  total_maintenance_benefit=$((total_maintenance_benefit+db_maintenance_benefit))
   if [[ -n "$bloat_indexes" ]] && [[ $failed_reindex_count -lt $FAILED_REINDEX_LIMIT ]]; then
     info "Completed index maintenance for database: $db (released: $db_maintenance_benefit MB)"
   fi
 
-  invalid_index_drop_commands=$(${_PSQL} -d "$db" -tAXc "SELECT string_agg('DROP INDEX CONCURRENTLY '||quote_ident(schemaname)||'.'||quote_ident(indexrelname), '; ')||';' FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname like 'index_%'")
-  if [ -n "$invalid_index_drop_commands" ]; then
-    info "A temporary index(es) apparently created by pg_repack has been left behind, and we do not want to risk dropping this index ourselves."
-    info "If the index was in fact created by an old pg_repack job which didn't get cleaned up, you should just use next commands:"
-    info "$invalid_index_drop_commands"
-    info "and run pg_auto_reindexer again."
-  fi
-
+  total_maintenance_benefit=$((total_maintenance_benefit + db_maintenance_benefit))
 done
-
 info "Total amount released during maintenance: $total_maintenance_benefit MB"
 exit
