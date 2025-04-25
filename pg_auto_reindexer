@@ -307,11 +307,13 @@ fi
 function process_index_repack() {
   local index="$1"
   local retry_n=0
+  local delays=(2 10 30 60)
 
   index_size_before=$(check_index_size "$index")
 
-  for delay in 2 10 30 60; do
-    sleep $delay
+  for delay in "${delays[@]}"; do
+    sleep "${delay}"
+
     if [[ $retry_n -eq 0 ]]; then
       info "  repack index $index (size: $index_size_before MB)"
     else
@@ -321,23 +323,28 @@ function process_index_repack() {
     if bash -c "PGOPTIONS=\"${PGOPTIONS}\" pg_repack -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -i '$index' --elevel=WARNING" 2>&1 | warnmsg; then
       index_size_after=$(check_index_size "$index")
       info "  completed repack index $index (size after: $index_size_after MB)"
-      db_maintenance_benefit=$((db_maintenance_benefit+index_size_before-index_size_after))
+      db_maintenance_benefit=$((db_maintenance_benefit + index_size_before - index_size_after))
       return 0
     else
-      retry_n=$((retry_n+1))
+      retry_n=$((retry_n + 1))
 
-      # Check for invalid temporary indexes with the suffix "index_"
-      invalid_index=$(${_PSQL} -d "$db" -tAXc "SELECT string_agg(quote_ident(schemaname)||'.'||quote_ident(indexrelname), ', ') FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND indexrelname like 'index_%'")
-      if [ -n "$invalid_index" ]; then
+      # Check for leftover invalid temporary index
+      invalid_index=$(${_PSQL} -d "$db" -tAXc \
+        "select string_agg(format('%I.%I', schemaname, indexrelname), ', ')
+         from pg_stat_user_indexes
+         join pg_index using(indexrelid)
+         where not indisvalid and indexrelname like 'index_%'")
+
+      if [[ -n "$invalid_index" ]]; then
         warnmsg "  A temporary index apparently created by pg_repack has been left behind."
         warnmsg "  failed to repack index \"$index\". Skipping"
-        failed_reindex_count=$((failed_reindex_count+1))
+        failed_reindex_count=$((failed_reindex_count + 1))
         return 1
       fi
 
       if [[ $delay -eq 60 ]]; then
         warnmsg "  failed to repack index \"$index\" after all attempts. Skipping"
-        failed_reindex_count=$((failed_reindex_count+1))
+        failed_reindex_count=$((failed_reindex_count + 1))
         return 1
       fi
     fi
@@ -347,11 +354,13 @@ function process_index_repack() {
 function process_index_reindex() {
   local index="$1"
   local retry_n=0
+  local delays=(2 10 30 60)
 
   index_size_before=$(check_index_size "$index")
 
-  for delay in 2 10 30 60; do
-    sleep $delay
+  for delay in "${delays[@]}"; do
+    sleep "${delay}"
+
     if [[ $retry_n -eq 0 ]]; then
       info "  reindex index $index (size: $index_size_before MB)"
     else
@@ -361,23 +370,28 @@ function process_index_reindex() {
     if bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAXc 'REINDEX INDEX CONCURRENTLY $index' 1> /dev/null" 2>&1 | warnmsg; then
       index_size_after=$(check_index_size "$index")
       info "  completed reindex index $index (size after: $index_size_after MB)"
-      db_maintenance_benefit=$((db_maintenance_benefit+index_size_before-index_size_after))
+      db_maintenance_benefit=$((db_maintenance_benefit + index_size_before - index_size_after))
       return 0
     else
-      retry_n=$((retry_n+1))
+      retry_n=$((retry_n + 1))
 
-      # Try dropping invalid "ccnew" index if present
-      invalid_index=$(${_PSQL} -d "$db" -tAXc "SELECT quote_ident(schemaname)||'.'||quote_ident(indexrelname) FROM pg_stat_user_indexes sui JOIN pg_index i USING (indexrelid) WHERE NOT indisvalid AND quote_ident(schemaname)||'.'||quote_ident(indexrelname) = '${index}_ccnew'")
+      # Drop invalid concurrent index (e.g. *_ccnew) if exists
+      invalid_index=$(${_PSQL} -d "$db" -tAXc \
+        "select format('%I.%I', schemaname, indexrelname)
+         from pg_stat_user_indexes
+         join pg_index using(indexrelid)
+         where not indisvalid and format('%I.%I', schemaname, indexrelname) = '${index}_ccnew'")
+
       if [[ -n "$invalid_index" ]]; then
         if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAXc 'DROP INDEX CONCURRENTLY $invalid_index' &> /dev/null"; then
           warnmsg "  failed to drop invalid index $invalid_index"
-          warnmsg "  You may need to manually drop the invalid index before retrying."
+          warnmsg "  You may need to drop it manually and re-run pg_auto_reindexer."
         fi
       fi
 
       if [[ $delay -eq 60 ]]; then
         warnmsg "  failed to reindex index \"$index\" after all attempts. Skipping"
-        failed_reindex_count=$((failed_reindex_count+1))
+        failed_reindex_count=$((failed_reindex_count + 1))
         return 1
       fi
     fi
