@@ -417,20 +417,19 @@ for db in $DBNAME; do
           fi
           pg_isready
           maintenance_window
-          index_size_before=$(check_index_size "$index")
           process_index_repack "$index"
         done
 
       # if postgres >= 12 use reindex concurrently
       elif [[ $PG_VERSION -ge 12 ]]; then
         for index in $bloat_indexes; do
+
           if [[ "$FAILED_REINDEX_LIMIT" -ne 0 && $failed_reindex_count -ge $FAILED_REINDEX_LIMIT ]]; then
             warnmsg "Index maintenance for database: $db exceeded $FAILED_REINDEX_LIMIT failed reindex. Skipping."
             break
           fi
           pg_isready
           maintenance_window
-          index_size_before=$(check_index_size "$index")
           process_index_reindex "$index"
         done
       fi
