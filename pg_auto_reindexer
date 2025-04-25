@@ -3,7 +3,7 @@
 # Title: pg_auto_reindexer - Automatic reindexing of B-tree indexes
 
 version=1.4_dev
- 
+
 # ========================
 # === Help information ===
 # ========================
@@ -430,6 +430,8 @@ for db in $DBNAME; do
 
     if [[ -n "${bloat_indexes}" ]]; then
       for index in ${bloat_indexes}; do
+        pg_isready
+        maintenance_window
         process_reindex "${index}"
       done
     else
