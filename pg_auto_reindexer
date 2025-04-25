@@ -105,7 +105,7 @@ PG_VERSION=$(
 PGOPTIONS="-c statement_timeout=0 -c lock_timeout=1s"
 
 # Disable parallel maintenance workers
-if [[ $PG_VERSION -ge 11 ]]; then
+if [[ "${PG_VERSION}" -ge 11 ]]; then
   PGOPTIONS+=" -c max_parallel_maintenance_workers=0"
 fi
 
@@ -284,9 +284,7 @@ function pg_isready(){
 }
 
 function create_extension_pgstattuple(){
-  if [[ "${BLOAT_SEARCH_METHOD}" = "pgstattuple" ]]; then
-    ${_PSQL} -d "$db" -tAXc "create extension if not exists pgstattuple;" &>/dev/null
-  fi
+  ${_PSQL} -d "$db" -tAXc "create extension if not exists pgstattuple;" &>/dev/null
 }
 
 function create_extension_pg_repack(){
@@ -307,109 +305,100 @@ function maintenance_window(){
   fi
 }
 
-function process_index_repack() {
+drop_invalid_index() {
   local index="$1"
-  local retry_n=0
-  local delays=(2 10 30 60)
 
-  index_size_before=$(check_index_size "$index")
+  if [[ ${PG_VERSION} -le 11 ]]; then
+    # Check invalid temporary index created by pg_repack
+    invalid_index_drop_commands=$(${_PSQL} -d "$db" -tAXc \
+      "select string_agg('DROP INDEX CONCURRENTLY '||format('%I.%I', schemaname, indexrelname), '; ')||';'
+       from pg_stat_user_indexes
+       join pg_index using(indexrelid)
+       where not indisvalid and indexrelname like 'index_%'")
 
-  for delay in "${delays[@]}"; do
-    sleep "${delay}"
-
-    if [[ $retry_n -eq 0 ]]; then
-      info "  repack index $index (size: $index_size_before MB)"
-    else
-      info "  [retry ${retry_n}/3] repack index $index (size: $index_size_before MB)"
+    if [[ -n "${invalid_index_drop_commands}" ]]; then
+      info "Leftover invalid pg_repack indexes detected:"
+      warnmsg "${invalid_index_drop_commands}"
     fi
+  else
+    # Drop invalid concurrent index (*_ccnew) if exists
+    invalid_index=$(${_PSQL} -d "$db" -tAXc \
+      "select format('%I.%I', schemaname, indexrelname)
+       from pg_stat_user_indexes
+       join pg_index using(indexrelid)
+       where not indisvalid and format('%I.%I', schemaname, indexrelname) = '${index}_ccnew'")
 
-    if bash -c "PGOPTIONS=\"${PGOPTIONS}\" pg_repack -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -i '$index' --elevel=WARNING" 2>&1 | warnmsg; then
-      index_size_after=$(check_index_size "$index")
-      info "  completed repack index $index (size after: $index_size_after MB)"
-      db_maintenance_benefit=$((db_maintenance_benefit + index_size_before - index_size_after))
-      return 0
-    else
-      retry_n=$((retry_n + 1))
-
-      # Check for leftover invalid temporary index
-      invalid_index=$(${_PSQL} -d "$db" -tAXc \
-        "select string_agg(format('%I.%I', schemaname, indexrelname), ', ')
-         from pg_stat_user_indexes
-         join pg_index using(indexrelid)
-         where not indisvalid and indexrelname like 'index_%'")
-
-      if [[ -n "$invalid_index" ]]; then
-        warnmsg "  A temporary index apparently created by pg_repack has been left behind."
-        warnmsg "  failed to repack index \"$index\". Skipping"
-        failed_reindex_count=$((failed_reindex_count + 1))
-        return 1
-      fi
-
-      invalid_index_drop_commands=$(${_PSQL} -d "$db" -tAXc \
-        "select string_agg('DROP INDEX CONCURRENTLY '||format('%I.%I', schemaname, indexrelname), '; ')||';'
-         from pg_stat_user_indexes
-         join pg_index using(indexrelid)
-         where not indisvalid and indexrelname like 'index_%'")
-
-      if [ -n "$invalid_index_drop_commands" ]; then
-        info "A temporary index(es) apparently created by pg_repack has been left behind, and we do not want to risk dropping this index ourselves."
-        info "If the index was in fact created by an old pg_repack job which didn't get cleaned up, you should just use next commands:"
-        info "$invalid_index_drop_commands"
-        info "and run pg_auto_reindexer again."
-      fi
-
-      if [[ $delay -eq 60 ]]; then
-        warnmsg "  failed to repack index \"$index\" after all attempts. Skipping"
-        failed_reindex_count=$((failed_reindex_count + 1))
-        return 1
+    if [[ -n "${invalid_index}" ]]; then
+      info "Dropping invalid index: ${invalid_index}"
+      if ! output=$(${_PSQL} -d "$db" -tAXc "DROP INDEX CONCURRENTLY ${invalid_index}" 2>&1); then
+        warnmsg "Failed to drop invalid index ${invalid_index}: $output"
       fi
     fi
-  done
+  fi
 }
 
-function process_index_reindex() {
-  local index="$1"
-  local retry_n=0
-  local delays=(2 10 30 60)
+run_repack() {
+  local index=$1
 
-  index_size_before=$(check_index_size "$index")
+  if ! output=$(PGOPTIONS="${PGOPTIONS}" pg_repack -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "${db}" -i "$index" --elevel=WARNING 2>&1); then
+    warnmsg "$output"
+    success=false
+    return 1
+  else
+    success=true
+    return 0
+  fi
+}
+
+run_reindex() {
+  local index=$1
+
+  if ! output=$(PGOPTIONS="${PGOPTIONS}" ${_PSQL} -d "${db}" -tAXc "REINDEX INDEX CONCURRENTLY $index" 2>&1); then
+    warnmsg "$output"
+    success=false
+    return 1
+  else
+    success=true
+    return 0
+  fi
+}
+
+process_reindex() {
+  local index=$1
+  local retry_n=0
+  local delays=(0 10 30 60)
 
   for delay in "${delays[@]}"; do
     sleep "${delay}"
 
-    if [[ $retry_n -eq 0 ]]; then
-      info "  reindex index $index (size: $index_size_before MB)"
+    index_size_before=$(check_index_size "$index")
+
+    if (( retry_n == 0 )); then
+      info " reindex index ${index} (size: ${index_size_before} MB)"
     else
-      info "  [retry ${retry_n}/3] reindex index $index (size: $index_size_before MB)"
+      info " [retry ${retry_n}/3] reindex index ${index} (size: ${index_size_before} MB)"
     fi
 
-    if bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAXc 'REINDEX INDEX CONCURRENTLY $index' 1> /dev/null" 2>&1 | warnmsg; then
+    if [[ ${PG_VERSION} -le 11 ]]; then
+      run_repack "$index"
+    else
+      run_reindex "$index"
+    fi
+
+    if [[ "${success}" == true ]]; then
       index_size_after=$(check_index_size "$index")
-      info "  completed reindex index $index (size after: $index_size_after MB)"
+      info "Completed processing index ${index} (size after: ${index_size_after} MB)"
       db_maintenance_benefit=$((db_maintenance_benefit + index_size_before - index_size_after))
       return 0
     else
+      drop_invalid_index "$index"
       retry_n=$((retry_n + 1))
+    fi
 
-      # Drop invalid concurrent index (e.g. *_ccnew) if exists
-      invalid_index=$(${_PSQL} -d "$db" -tAXc \
-        "select format('%I.%I', schemaname, indexrelname)
-         from pg_stat_user_indexes
-         join pg_index using(indexrelid)
-         where not indisvalid and format('%I.%I', schemaname, indexrelname) = '${index}_ccnew'")
-
-      if [[ -n "$invalid_index" ]]; then
-        if ! bash -c "PGOPTIONS=\"${PGOPTIONS}\" psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER} -d $db -tAXc 'DROP INDEX CONCURRENTLY $invalid_index' &> /dev/null"; then
-          warnmsg "  failed to drop invalid index $invalid_index"
-          warnmsg "  You may need to drop it manually and re-run pg_auto_reindexer."
-        fi
-      fi
-
-      if [[ $delay -eq 60 ]]; then
-        warnmsg "  failed to reindex index \"$index\" after all attempts. Skipping"
-        failed_reindex_count=$((failed_reindex_count + 1))
-        return 1
-      fi
+    if [[ "${delay}" -eq 60 ]]; then
+      failed_reindex_count=$((failed_reindex_count + 1))
+      warnmsg "Failed to reindex index \"${index}\" after all attempts. Skipping."
+      return 1
     fi
   done
 }
@@ -427,51 +416,38 @@ for db in $DBNAME; do
   db_maintenance_benefit=0
 
   if pg_isready; then
-    create_extension_pgstattuple
-    info "Started index maintenance for database: $db"
+    info "Started index maintenance for database: ${db}"
 
-    bloat_indexes=$(${_PSQL} -d "$db" -tAXc "$INDEX_BLOAT_SQL")
+    if [[ "${BLOAT_SEARCH_METHOD}" = "pgstattuple" ]]; then
+      create_extension_pgstattuple
+    fi
 
-    if [[ -n "$bloat_indexes" ]]; then
-      failed_reindex_count=0
+    if [[ "${PG_VERSION}" -le 11 ]]; then
+      create_extension_pg_repack
+    fi
 
-      # if postgres <= 11 use pg_repack
-      if [[ $PG_VERSION -le 11 ]]; then
-        create_extension_pg_repack
-        for index in $bloat_indexes; do
-          if [[ "$FAILED_REINDEX_LIMIT" -ne 0 && $failed_reindex_count -ge $FAILED_REINDEX_LIMIT ]]; then
-            warnmsg "Index maintenance for database: $db exceeded $FAILED_REINDEX_LIMIT failed index repacking. Skipping."
-            break
-          fi
-          pg_isready
-          maintenance_window
-          process_index_repack "$index"
-        done
+    bloat_indexes=$(${_PSQL} -d "${db}" -tAXc "$INDEX_BLOAT_SQL")
 
-      # if postgres >= 12 use reindex concurrently
-      elif [[ $PG_VERSION -ge 12 ]]; then
-        for index in $bloat_indexes; do
-
-          if [[ "$FAILED_REINDEX_LIMIT" -ne 0 && $failed_reindex_count -ge $FAILED_REINDEX_LIMIT ]]; then
-            warnmsg "Index maintenance for database: $db exceeded $FAILED_REINDEX_LIMIT failed reindex. Skipping."
-            break
-          fi
-          pg_isready
-          maintenance_window
-          process_index_reindex "$index"
-        done
-      fi
+    if [[ -n "${bloat_indexes}" ]]; then
+      for index in ${bloat_indexes}; do
+        process_reindex "${index}"
+      done
     else
-      info "  no bloat indexes were found"
-      info "Completed index maintenance for database: $db"
+      info " no bloat indexes were found"
+      info "Completed index maintenance for database: ${db}"
     fi
   fi
 
-  if [[ -n "$bloat_indexes" ]] && [[ $failed_reindex_count -lt $FAILED_REINDEX_LIMIT ]]; then
-    info "Completed index maintenance for database: $db (released: $db_maintenance_benefit MB)"
+  if [[ -n "${bloat_indexes}" ]] && [[ "${failed_reindex_count}" -eq 0 ]]; then
+    info "Completed index maintenance for database: ${db} (released: $db_maintenance_benefit MB)"
+  elif [[ "$FAILED_REINDEX_LIMIT" -ne 0 && "${failed_reindex_count}" -ge "$FAILED_REINDEX_LIMIT" ]]; then
+    warnmsg "Exceeded $FAILED_REINDEX_LIMIT failed attempts. Skipping database ${db}."
+    break
   fi
 
   total_maintenance_benefit=$((total_maintenance_benefit + db_maintenance_benefit))
 done
+
 info "Total amount released during maintenance: $total_maintenance_benefit MB"
+
 exit
