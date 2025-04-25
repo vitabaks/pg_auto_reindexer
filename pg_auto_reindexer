@@ -3,9 +3,10 @@
 # Title: pg_auto_reindexer - Automatic reindexing of B-tree indexes
 
 version=1.4_dev
-
+ 
+# ========================
 # === Help information ===
-
+# ========================
 function help() {
 cat <<EOF
 pg_auto_reindexer - Automatic reindexing of B-tree indexes
@@ -38,8 +39,9 @@ EOF
 exit
 }
 
+# ========================
 # === Argument parsing ===
-
+# ========================
 for arg in "$@"; do
   if [[ "$arg" == --*=* ]]; then
     opt="${arg%%=*}"
@@ -73,8 +75,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# =========================
 # === Default variables ===
-
+# =========================
 if [[ -z $PGHOST ]]; then PGHOST="/var/run/postgresql"; fi
 if [[ -z $PGPORT ]]; then PGPORT="5432"; fi
 if [[ -z $DBUSER ]]; then DBUSER="postgres"; fi
@@ -106,8 +109,9 @@ if [[ $PG_VERSION -ge 11 ]]; then
   PGOPTIONS+=" -c max_parallel_maintenance_workers=0"
 fi
 
+# =================
 # === Functions ===
-
+# =================
 function info(){
   if [ -n "$1" ]; then
     msg="$1"
@@ -300,7 +304,9 @@ order by index_size asc;
 "
 fi
 
+# ==================
 # === Main logic ===
+# ==================
 
 # Check current time
 maintenance_window
