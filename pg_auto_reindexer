@@ -448,18 +448,19 @@ for db in ${DBNAME}; do
       done
     else
       info " no bloat indexes were found"
+    fi
+
+    if [[ -n "${bloat_indexes}" ]] && [[ "${failed_reindex_count}" -eq 0 ]]; then
+      info "Completed index maintenance for database: ${db} (released: ${db_maintenance_benefit} MB)"
+    elif [[ "${FAILED_REINDEX_LIMIT}" -ne 0 && "${failed_reindex_count}" -ge "${FAILED_REINDEX_LIMIT}" ]]; then
+      warnmsg "Exceeded ${FAILED_REINDEX_LIMIT} failed attempts. Skipping database ${db}."
+      break
+    else
       info "Completed index maintenance for database: ${db}"
     fi
-  fi
 
-  if [[ -n "${bloat_indexes}" ]] && [[ "${failed_reindex_count}" -eq 0 ]]; then
-    info "Completed index maintenance for database: ${db} (released: ${db_maintenance_benefit} MB)"
-  elif [[ "${FAILED_REINDEX_LIMIT}" -ne 0 && "${failed_reindex_count}" -ge "${FAILED_REINDEX_LIMIT}" ]]; then
-    warnmsg "Exceeded ${FAILED_REINDEX_LIMIT} failed attempts. Skipping database ${db}."
-    break
+    total_maintenance_benefit=$((total_maintenance_benefit + db_maintenance_benefit))
   fi
-
-  total_maintenance_benefit=$((total_maintenance_benefit + db_maintenance_benefit))
 done
 
 if (( db_count > 1 )); then
