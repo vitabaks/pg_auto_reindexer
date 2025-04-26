@@ -371,7 +371,7 @@ process_reindex() {
   for delay in "${delays[@]}"; do
     sleep "${delay}"
 
-    if [[ ${retry_n} -le 10 ]]; then
+    if (( retry_n > 0 )); then
       info " [retry ${retry_n}/3] Reindex index ${index}"
     fi
 
