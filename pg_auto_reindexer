@@ -43,12 +43,12 @@ exit
 # === Argument parsing ===
 # ========================
 for arg in "$@"; do
-  if [[ "$arg" == --*=* ]]; then
+  if [[ "${arg}" == --*=* ]]; then
     opt="${arg%%=*}"
     val="${arg#*=}"
-    newargs+=("$opt" "$val")
+    newargs+=("${opt}" "${val}")
   else
-    newargs+=("$arg")
+    newargs+=("${arg}")
   fi
 done
 set -- "${newargs[@]}"
@@ -78,18 +78,18 @@ done
 # =========================
 # === Default variables ===
 # =========================
-if [[ -z $PGHOST ]]; then PGHOST="/var/run/postgresql"; fi
-if [[ -z $PGPORT ]]; then PGPORT="5432"; fi
-if [[ -z $DBUSER ]]; then DBUSER="postgres"; fi
-if [[ -z $INDEX_BLOAT ]]; then INDEX_BLOAT="30"; fi
-if [[ -z $BLOAT_SEARCH_METHOD ]]; then BLOAT_SEARCH_METHOD="estimate"; fi
-if [[ -z $INDEX_MINSIZE ]]; then INDEX_MINSIZE="1"; fi
-if [[ -z $INDEX_MAXSIZE ]]; then INDEX_MAXSIZE="1000000"; fi
-if [[ -z $FAILED_REINDEX_LIMIT ]]; then FAILED_REINDEX_LIMIT="0"; fi
+if [[ -z "${PGHOST}" ]]; then PGHOST="/var/run/postgresql"; fi
+if [[ -z "${PGPORT}" ]]; then PGPORT="5432"; fi
+if [[ -z "${DBUSER}" ]]; then DBUSER="postgres"; fi
+if [[ -z "${INDEX_BLOAT}" ]]; then INDEX_BLOAT="30"; fi
+if [[ -z "${BLOAT_SEARCH_METHOD}" ]]; then BLOAT_SEARCH_METHOD="estimate"; fi
+if [[ -z "${INDEX_MINSIZE}" ]]; then INDEX_MINSIZE="1"; fi
+if [[ -z "${INDEX_MAXSIZE}" ]]; then INDEX_MAXSIZE="1000000"; fi
+if [[ -z "${FAILED_REINDEX_LIMIT}" ]]; then FAILED_REINDEX_LIMIT="0"; fi
 
 _PSQL="psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER}"
 
-if [[ -z $DBNAME ]]; then
+if [[ -z "${DBNAME}" ]]; then
   if ! DBNAME=$(${_PSQL} -d postgres -tAXc "select datname from pg_database where not datistemplate"); then
     errmsg "Unable to connect to database postgres on ${PGHOST}:${PGPORT}"
   fi
@@ -237,10 +237,10 @@ function info(){
     msg="$1"
   else
     read -r msg
-    msg="  $msg"
+    msg="  ${msg}"
   fi
-  echo -e "$(date "+%F %T") INFO: $msg"
-  logger -p user.notice -t "$(basename "$0")" "$msg"
+  echo -e "$(date "+%F %T") INFO: ${msg}"
+  logger -p user.notice -t "$(basename "$0")" "${msg}"
 }
 
 function warnmsg(){
@@ -248,13 +248,13 @@ function warnmsg(){
     msg="$1"
   else
     read -r msg
-    msg="  $msg"
-    if [[ $msg == "  " ]]; then
+    msg="  ${msg}"
+    if [[ ${msg} == "  " ]]; then
       return 0
     fi
   fi
-  echo -e "$(date "+%F %T") WARN: $msg"
-  logger -p user.notice -t "$(basename "$0")" "$msg"
+  echo -e "$(date "+%F %T") WARN: ${msg}"
+  logger -p user.notice -t "$(basename "$0")" "${msg}"
   return 1
 }
 
@@ -263,10 +263,10 @@ function errmsg(){
     msg="$1"
   else
     read -r msg
-    msg="  $msg"
+    msg="  ${msg}"
   fi
-  echo -e "$(date "+%F %T") ERROR: $msg"
-  logger -p user.error -t "$(basename "$0")" "$msg"
+  echo -e "$(date "+%F %T") ERROR: ${msg}"
+  logger -p user.error -t "$(basename "$0")" "${msg}"
   exit 1
 }
 
@@ -284,21 +284,21 @@ function pg_isready(){
 }
 
 function create_extension_pgstattuple(){
-  ${_PSQL} -d "$db" -tAXc "create extension if not exists pgstattuple;" &>/dev/null
+  ${_PSQL} -d "${db}" -tAXc "create extension if not exists pgstattuple;" &>/dev/null
 }
 
 function create_extension_pg_repack(){
-  ${_PSQL} -d "$db" -tAXc "create extension if not exists pg_repack" &>/dev/null
+  ${_PSQL} -d "${db}" -tAXc "create extension if not exists pg_repack" &>/dev/null
 }
 
 function check_index_size(){
-  ${_PSQL} -d "$db" -tAXc "select pg_relation_size('$1')/1024/1024"
+  ${_PSQL} -d "${db}" -tAXc "select pg_relation_size('$1')/1024/1024"
 }
 
 function maintenance_window(){
   if [[ -n "${MAINTENANCE_START}" ]] && [[ -n "${MAINTENANCE_STOP}" ]]; then
     currentTime=$(date "+%H%M")
-    if [[ "$currentTime" -lt "${MAINTENANCE_START}" ]] || [[ "$currentTime" -gt "${MAINTENANCE_STOP}" ]]; then
+    if [[ "${currentTime}" -lt "${MAINTENANCE_START}" ]] || [[ "${currentTime}" -gt "${MAINTENANCE_STOP}" ]]; then
       warnmsg "Current time: $(date "+%R %Z"). This is outside of the maintenance window: $(date --date="${MAINTENANCE_START}" "+%R")-$(date --date="${MAINTENANCE_STOP}" "+%R"). Exit."
       exit
     fi
@@ -310,7 +310,7 @@ drop_invalid_index() {
 
   if [[ ${PG_VERSION} -le 11 ]]; then
     # Check invalid temporary index created by pg_repack
-    invalid_index_drop_commands=$(${_PSQL} -d "$db" -tAXc \
+    invalid_index_drop_commands=$(${_PSQL} -d "${db}" -tAXc \
       "select string_agg('DROP INDEX CONCURRENTLY '||format('%I.%I', schemaname, indexrelname), '; ')||';'
        from pg_stat_user_indexes
        join pg_index using(indexrelid)
@@ -322,7 +322,7 @@ drop_invalid_index() {
     fi
   else
     # Drop invalid concurrent index (*_ccnew) if exists
-    invalid_index=$(${_PSQL} -d "$db" -tAXc \
+    invalid_index=$(${_PSQL} -d "${db}" -tAXc \
       "select format('%I.%I', schemaname, indexrelname)
        from pg_stat_user_indexes
        join pg_index using(indexrelid)
@@ -330,8 +330,8 @@ drop_invalid_index() {
 
     if [[ -n "${invalid_index}" ]]; then
       info "Dropping invalid index: ${invalid_index}"
-      if ! output=$(${_PSQL} -d "$db" -tAXc "DROP INDEX CONCURRENTLY ${invalid_index}" 2>&1); then
-        warnmsg "Failed to drop invalid index ${invalid_index}: $output"
+      if ! output=$(${_PSQL} -d "${db}" -tAXc "DROP INDEX CONCURRENTLY ${invalid_index}" 2>&1); then
+        warnmsg "Failed to drop invalid index ${invalid_index}: ${output}"
       fi
     fi
   fi
@@ -341,7 +341,7 @@ run_repack() {
   local index=$1
 
   if ! output=$(PGOPTIONS="${PGOPTIONS}" pg_repack -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "${db}" -i "$index" --elevel=WARNING 2>&1); then
-    warnmsg "$output"
+    warnmsg "${output}"
     success=false
     return 1
   else
@@ -354,7 +354,7 @@ run_reindex() {
   local index=$1
 
   if ! output=$(PGOPTIONS="${PGOPTIONS}" ${_PSQL} -d "${db}" -tAXc "REINDEX INDEX CONCURRENTLY $index" 2>&1); then
-    warnmsg "$output"
+    warnmsg "${output}"
     success=false
     return 1
   else
@@ -380,9 +380,9 @@ process_reindex() {
     fi
 
     if [[ ${PG_VERSION} -le 11 ]]; then
-      run_repack "$index"
+      run_repack "${index}"
     else
-      run_reindex "$index"
+      run_reindex "${index}"
     fi
 
     if [[ "${success}" == true ]]; then
@@ -391,7 +391,7 @@ process_reindex() {
       db_maintenance_benefit=$((db_maintenance_benefit + index_size_before - index_size_after))
       return 0
     else
-      drop_invalid_index "$index"
+      drop_invalid_index "${index}"
       retry_n=$((retry_n + 1))
     fi
 
@@ -412,7 +412,7 @@ maintenance_window
 
 # Perform reindexing for each database
 total_maintenance_benefit=0
-for db in $DBNAME; do
+for db in ${DBNAME}; do
   db_maintenance_benefit=0
 
   if pg_isready; then
@@ -426,7 +426,7 @@ for db in $DBNAME; do
       create_extension_pg_repack
     fi
 
-    bloat_indexes=$(${_PSQL} -d "${db}" -tAXc "$INDEX_BLOAT_SQL")
+    bloat_indexes=$(${_PSQL} -d "${db}" -tAXc "${INDEX_BLOAT_SQL}")
 
     if [[ -n "${bloat_indexes}" ]]; then
       for index in ${bloat_indexes}; do
@@ -441,15 +441,15 @@ for db in $DBNAME; do
   fi
 
   if [[ -n "${bloat_indexes}" ]] && [[ "${failed_reindex_count}" -eq 0 ]]; then
-    info "Completed index maintenance for database: ${db} (released: $db_maintenance_benefit MB)"
-  elif [[ "$FAILED_REINDEX_LIMIT" -ne 0 && "${failed_reindex_count}" -ge "$FAILED_REINDEX_LIMIT" ]]; then
-    warnmsg "Exceeded $FAILED_REINDEX_LIMIT failed attempts. Skipping database ${db}."
+    info "Completed index maintenance for database: ${db} (released: ${db_maintenance_benefit} MB)"
+  elif [[ "${FAILED_REINDEX_LIMIT}" -ne 0 && "${failed_reindex_count}" -ge "${FAILED_REINDEX_LIMIT}" ]]; then
+    warnmsg "Exceeded ${FAILED_REINDEX_LIMIT} failed attempts. Skipping database ${db}."
     break
   fi
 
   total_maintenance_benefit=$((total_maintenance_benefit + db_maintenance_benefit))
 done
 
-info "Total amount released during maintenance: $total_maintenance_benefit MB"
+info "Total amount released during maintenance: ${total_maintenance_benefit} MB"
 
 exit
