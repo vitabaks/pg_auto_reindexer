@@ -382,7 +382,6 @@ process_reindex() {
     fi
 
     if [[ "${success}" == true ]]; then
-      info " Completed processing index ${index}"
       return 0
     else
       drop_invalid_index "${index}"
