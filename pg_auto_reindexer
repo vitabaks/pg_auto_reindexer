@@ -233,7 +233,7 @@ fi
 # === Functions ===
 # =================
 function info(){
-  if [ -n "$1" ]; then
+  if [[ -n "$1" ]]; then
     msg="$1"
   else
     read -r msg
@@ -244,7 +244,7 @@ function info(){
 }
 
 function warnmsg(){
-  if [ -n "$1" ]; then
+  if [[ -n "$1" ]]; then
     msg="$1"
   else
     read -r msg
@@ -259,7 +259,7 @@ function warnmsg(){
 }
 
 function errmsg(){
-  if [ -n "$1" ]; then
+  if [[ -n "$1" ]]; then
     msg="$1"
   else
     read -r msg
@@ -276,7 +276,7 @@ function pg_isready(){
   else
   # in recovery mode?
   state=$(${_PSQL} -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc 'SELECT pg_is_in_recovery()') 2>/dev/null
-    if [ "$state" = "t" ]; then
+    if [[ "${state}" = "t" ]]; then
       warnmsg "This server is in recovery mode. Index maintenance will not be performed on that server."
       exit
     fi
@@ -296,9 +296,9 @@ function check_index_size(){
 }
 
 function maintenance_window(){
-  if [ -n "${MAINTENANCE_START}" ] && [ -n "${MAINTENANCE_STOP}" ]; then
+  if [[ -n "${MAINTENANCE_START}" ]] && [[ -n "${MAINTENANCE_STOP}" ]]; then
     currentTime=$(date "+%H%M")
-    if [ "$currentTime" -lt "${MAINTENANCE_START}" ] || [ "$currentTime" -gt "${MAINTENANCE_STOP}" ]; then
+    if [[ "$currentTime" -lt "${MAINTENANCE_START}" ]] || [[ "$currentTime" -gt "${MAINTENANCE_STOP}" ]]; then
       warnmsg "Current time: $(date "+%R %Z"). This is outside of the maintenance window: $(date --date="${MAINTENANCE_START}" "+%R")-$(date --date="${MAINTENANCE_STOP}" "+%R"). Exit."
       exit
     fi
