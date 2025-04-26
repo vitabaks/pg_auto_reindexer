@@ -372,7 +372,7 @@ process_reindex() {
     sleep "${delay}"
 
     if (( retry_n > 0 )); then
-      info " [retry ${retry_n}/3] Reindex index ${index}"
+      info " [retry ${retry_n}/3] reindex index ${index}"
     fi
 
     if [[ ${PG_VERSION} -le 11 ]]; then
@@ -405,7 +405,10 @@ maintenance_window
 
 # Perform reindexing for each database
 total_maintenance_benefit=0
+db_count=0
+
 for db in ${DBNAME}; do
+  db_count=$((db_count + 1))
   db_maintenance_benefit=0
 
   if pg_isready; then
@@ -459,6 +462,8 @@ for db in ${DBNAME}; do
   total_maintenance_benefit=$((total_maintenance_benefit + db_maintenance_benefit))
 done
 
-info "Total amount released during maintenance: ${total_maintenance_benefit} MB"
+if (( db_count > 1 )); then
+  info "Total amount released during maintenance: ${total_maintenance_benefit} MB"
+fi
 
 exit
