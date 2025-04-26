@@ -329,9 +329,9 @@ drop_invalid_index() {
        where not indisvalid and format('%I.%I', schemaname, indexrelname) = '${index}_ccnew'")
 
     if [[ -n "${invalid_index}" ]]; then
-      info "Dropping invalid index: ${invalid_index}"
+      info " Invalid index detected: ${invalid_index}. Dropping."
       if ! output=$(${_PSQL} -d "${db}" -tAXc "DROP INDEX CONCURRENTLY ${invalid_index}" 2>&1); then
-        warnmsg "Failed to drop invalid index ${invalid_index}: ${output}"
+        warnmsg " Failed to drop invalid index ${invalid_index}: ${output}"
       fi
     fi
   fi
