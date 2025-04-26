@@ -388,7 +388,6 @@ process_reindex() {
     if [[ "${success}" == true ]]; then
       index_size_after=$(check_index_size "$index")
       info "Completed processing index ${index} (size after: ${index_size_after} MB)"
-      db_maintenance_benefit=$((db_maintenance_benefit + index_size_before - index_size_after))
       return 0
     else
       drop_invalid_index "${index}"
@@ -433,6 +432,8 @@ for db in ${DBNAME}; do
         pg_isready
         maintenance_window
         process_reindex "${index}"
+
+        db_maintenance_benefit=$((db_maintenance_benefit + index_size_before - index_size_after))
       done
     else
       info " no bloat indexes were found"
