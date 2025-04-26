@@ -427,7 +427,7 @@ for db in ${DBNAME}; do
         maintenance_window
 
         index_size_before=$(check_index_size "${index}")
-        info " Reindex index ${index} (current size: ${index_size_before} MB)"
+        info " reindex index ${index} (current size: ${index_size_before} MB)"
 
         process_reindex "${index}"
 
@@ -438,7 +438,7 @@ for db in ${DBNAME}; do
           else
             saved_percent=0
           fi
-          info " Completed reindexing ${index} (new size: ${index_size_after} MB, reduced: ${saved_percent}%)"
+          info " completed reindex ${index} (new size: ${index_size_after} MB, reduced: ${saved_percent}%)"
         fi
 
         db_maintenance_benefit=$((db_maintenance_benefit + index_size_before - index_size_after))
