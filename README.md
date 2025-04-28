@@ -1,74 +1,64 @@
-# pg_auto_reindexer
- Automatic reindexing of B-tree indexes (bloat cleanup)
+## pg_auto_reindexer – Automatic reindexing of PostgreSQL indexes (bloat cleanup)
 
-This script is designed to search and automatically repacking (reindex) Bloat indexes with minimal locks. For PostgreSQL <= 11 use [pg_repack](https://github.com/reorg/pg_repack) and [REINDEX CONCURRENTLY](https://www.postgresql.org/docs/current/sql-reindex.html#SQL-REINDEX-CONCURRENTLY) for PostgreSQL >= 12.
+This script automatically detects and reindexes bloated B-tree indexes with minimal locking. For PostgreSQL versions 11 and earlier, it uses [pg_repack](https://github.com/reorg/pg_repack); for PostgreSQL 12 and later, it uses [REINDEX CONCURRENTLY](https://www.postgresql.org/docs/current/sql-reindex.html#SQL-REINDEX-CONCURRENTLY).
 
-#### Example
+## Usage example
+
 ```
-pg_auto_reindexer --index_bloat=20 --maintenance_start=0100 --maintenance_stop=0600
+pg_auto_reindexer --index-bloat=40 --maintenance-start=0100 --maintenance-stop=0600
 ```
 
-#### pg_auto_reindexer --help
+Output example:
+
+```
+2025-04-28 01:00:57 INFO: Started index maintenance for database: casdb
+2025-04-28 01:00:58 INFO:  no bloat indexes were found
+2025-04-28 01:01:00 INFO: Started index maintenance for database: crsdb
+2025-04-28 01:01:08 INFO:  reindex index carousel.crs_queue_low_head_idx (current size: 180 MB)
+2025-04-28 01:01:33 INFO:  completed reindex carousel.crs_queue_low_head_idx (new size: 26 MB, reduced: 85%)
+2025-04-28 01:01:33 INFO:  reindex index carousel.crs_queue_low_pk (current size: 209 MB)
+2025-04-28 01:01:52 INFO:  completed reindex carousel.crs_queue_low_pk (new size: 17 MB, reduced: 91%)
+2025-04-28 01:01:52 INFO:  reindex index carousel.crs_queue_low_head_pk (current size: 266 MB)
+2025-04-28 01:01:56 INFO:  completed reindex carousel.crs_queue_low_head_pk (new size: 18 MB, reduced: 93%)
+2025-04-28 01:01:56 INFO: Completed index maintenance for database: crsdb (released: 594 MB)
+```
+
+#### Help
 ```
 pg_auto_reindexer - Automatic reindexing of B-tree indexes
 
---pghost=
-    PostgreSQL host (default: /var/run/postgresql)
+Usage:
+  pg_auto_reindexer [OPTIONS]
 
---pgport=
-    PostgreSQL port (default: 5432)
+Connection options:
+  -h, --host=HOSTNAME               PostgreSQL host (default: /var/run/postgresql)
+  -p, --port=PORT                   PostgreSQL port (default: 5432)
+  -U, --username=USERNAME           PostgreSQL user (default: postgres)
+  -d, --dbname=DBNAME               PostgreSQL database for reindexing (default: all databases)
 
---dbname=
-    PostgreSQL database (default: all databases)
+Reindexing options:
+  -b, --index-bloat=PERCENT         Index bloat threshold in percent (default: 30)
+  -m, --index-minsize=MB            Minimum index size in MB (default: 1)
+  -M, --index-maxsize=MB            Maximum index size in MB (default: 1000000)
+  -s, --maintenance-start=HHMM      Maintenance window start (24h format)
+  -S, --maintenance-stop=HHMM       Maintenance window stop (24h format)
+  -t, --bloat-search-method=METHOD  Bloat detection method: estimate | pgstattuple (default: estimate)
+  -l, --failed-reindex-limit=N      Max reindex failures before skipping DB (default: 0)
 
---dbuser=
-    PostgreSQL database user name (default: postgres)
+Other options:
+  -v, --version                     Show version information and exit
+  -?, --help                        Show this help message and exit
 
---index_bloat=
-    Index bloat in % (default: 30)
-
---index_minsize=
-    Minimum index size in MB (default: 1)
-    Exclude indexes less than specified size
-
---index_maxsize=
-    Maximum index size in MB (default: 1000000)
-    Exclude indexes larger than specified size
-
---maintenance_start=HHMM --maintenance_stop=HHMM
-    Determine the time range of the maintenance window (24 hour format: %H%M) [ optional ]
-    Example: 2200 (22 hours 00 minutes)
-
---bloat_search_method=
-    estimate - index bloat estimation (default)
-    pgstattuple - use pgstattuple extension to search bloat indexes (could cause I/O spikes) [ optional ]
-
---failed_reindex_limit=
-    The maximum number of reindex errors during database maintenance (default: 1)
-    Example: canceling statement due to lock timeout
-    After reaching the limit - the script moves to the next database.
-
--h, --help
-    show this help, then exit
-
--V, --version
-    output version information, then exit
-
-Examples:
-  pg_auto_reindexer --index_bloat=20 --maintenance_start=0100 --maintenance_stop=0600
-
-Dependencies:
-  postgresql-<version>-repack package (for postgresql <= 11)
-
+Example:
+  pg_auto_reindexer --index-bloat=40 --maintenance-start=0100 --maintenance-stop=0600
 ```
 
 ## Compatibility
 all supported PostgreSQL versions
 
-
 ## Dependencies:
-`postgresql-<version>-repack` package (for postgresql <= 11)
 
+For old PostgreSQL versions (11 and below) the [pg_repack](https://github.com/reorg/pg_repack) extension package must be installed.
 
 ## Installation
 1. Download and copy the `pg_auto_reindexer` script to `/usr/bin/` directory
@@ -76,7 +66,7 @@ all supported PostgreSQL versions
 
 Example:
 ```
-wget https://raw.githubusercontent.com/vitabaks/pg_auto_reindexer/master/pg_auto_reindexer
+wget https://raw.githubusercontent.com/vitabaks/pg_auto_reindexer/refs/heads/main/pg_auto_reindexer
 sudo mv pg_auto_reindexer /usr/bin/
 sudo chown postgres:postgres /usr/bin/pg_auto_reindexer
 sudo chmod 750 /usr/bin/pg_auto_reindexer
@@ -96,5 +86,3 @@ Vitaliy Kukharik (PostgreSQL DBA) vitabaks@gmail.com
 
 ## Feedback, bug-reports, requests, ...
 Are [welcome](https://github.com/vitabaks/pg_auto_reindexer/issues)!
-
-#### If you noticed a bug or a missing feature or just have an idea of how this project could be enhanced, please feel free to file an issue.
