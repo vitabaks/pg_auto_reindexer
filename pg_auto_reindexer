@@ -307,12 +307,12 @@ function maintenance_window(){
 
 drop_invalid_index() {
   local index="$1"
-  local invalid_index_pattern
+  local invalid_index_name
 
   if [[ ${PG_VERSION} -le 11 ]]; then
-    invalid_index_pattern="index_${index}"
+    invalid_index_name="index_${index}"
   else
-    invalid_index_pattern="${index}_ccnew"
+    invalid_index_name="${index}_ccnew"
   fi
 
   invalid_index=$(${_PSQL} -d "${db}" -tAXc "
@@ -320,7 +320,7 @@ drop_invalid_index() {
     from pg_stat_user_indexes
     join pg_index using (indexrelid)
     where not indisvalid
-      and format('%I.%I', schemaname, indexrelname) = '${invalid_index_pattern}'
+      and format('%I.%I', schemaname, indexrelname) = '${invalid_index_name}'
   ")
 
   if [[ -n "${invalid_index}" ]]; then
