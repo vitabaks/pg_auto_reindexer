@@ -307,32 +307,26 @@ function maintenance_window(){
 
 drop_invalid_index() {
   local index="$1"
+  local invalid_index_pattern
 
   if [[ ${PG_VERSION} -le 11 ]]; then
-    # Check invalid temporary index created by pg_repack
-    invalid_index_drop_commands=$(${_PSQL} -d "${db}" -tAXc \
-      "select string_agg('DROP INDEX CONCURRENTLY '||format('%I.%I', schemaname, indexrelname), '; ')||';'
-       from pg_stat_user_indexes
-       join pg_index using(indexrelid)
-       where not indisvalid and indexrelname like 'index_%'")
-
-    if [[ -n "${invalid_index_drop_commands}" ]]; then
-      info "Leftover invalid pg_repack indexes detected:"
-      warnmsg "${invalid_index_drop_commands}"
-    fi
+    invalid_index_pattern="index_${index}"
   else
-    # Drop invalid concurrent index (*_ccnew) if exists
-    invalid_index=$(${_PSQL} -d "${db}" -tAXc \
-      "select format('%I.%I', schemaname, indexrelname)
-       from pg_stat_user_indexes
-       join pg_index using(indexrelid)
-       where not indisvalid and format('%I.%I', schemaname, indexrelname) = '${index}_ccnew'")
+    invalid_index_pattern="${index}_ccnew"
+  fi
 
-    if [[ -n "${invalid_index}" ]]; then
-      info " Invalid index detected: ${invalid_index}. Dropping."
-      if ! output=$(${_PSQL} -d "${db}" -tAXc "DROP INDEX CONCURRENTLY ${invalid_index}" 2>&1); then
-        warnmsg " Failed to drop invalid index ${invalid_index}: ${output}"
-      fi
+  invalid_index=$(${_PSQL} -d "${db}" -tAXc "
+    select format('%I.%I', schemaname, indexrelname)
+    from pg_stat_user_indexes
+    join pg_index using (indexrelid)
+    where not indisvalid
+      and format('%I.%I', schemaname, indexrelname) = '${invalid_index_pattern}'
+  ")
+
+  if [[ -n "${invalid_index}" ]]; then
+    info " Invalid index detected: ${invalid_index}. Dropping."
+    if ! output=$(${_PSQL} -d "${db}" -tAXc "DROP INDEX CONCURRENTLY ${invalid_index}" 2>&1); then
+      warnmsg " Failed to drop invalid index ${invalid_index}: ${output}"
     fi
   fi
 }
