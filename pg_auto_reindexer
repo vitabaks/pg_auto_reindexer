@@ -340,7 +340,7 @@ drop_invalid_index() {
 run_repack() {
   local index=$1
 
-  if ! output=$(PGOPTIONS="${PGOPTIONS}" pg_repack -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "${db}" -i "$index" --elevel=WARNING 2>&1); then
+  if ! output=$(PGOPTIONS="${PGOPTIONS}" pg_repack -h "${PGHOST}" -p "${PGPORT}" -U "${DBUSER}" -d "${db}" -i "${index}" --elevel=WARNING 2>&1); then
     warnmsg "${output}"
     success=false
     return 1
@@ -353,7 +353,7 @@ run_repack() {
 run_reindex() {
   local index=$1
 
-  if ! output=$(PGOPTIONS="${PGOPTIONS}" ${_PSQL} -d "${db}" -tAXc "REINDEX INDEX CONCURRENTLY $index" 2>&1); then
+  if ! output=$(PGOPTIONS="${PGOPTIONS}" ${_PSQL} -d "${db}" -tAXc "REINDEX INDEX CONCURRENTLY ${index}" 2>&1); then
     warnmsg "${output}"
     success=false
     return 1
