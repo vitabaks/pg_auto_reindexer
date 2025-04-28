@@ -199,7 +199,8 @@ with bloat_indexes as (
               from pg_catalog.pg_index i
               join pg_catalog.pg_class ci on ci.oid = i.indexrelid
               where ci.relam=(select oid from pg_am where amname = 'btree')
-              and ci.relpages > 0
+                and ci.relpages > 0
+                and i.indisvalid
             ) as idx_data
           ) as ic
           join pg_catalog.pg_class ct on ct.oid = ic.tbloid
