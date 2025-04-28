@@ -1,4 +1,6 @@
-## pg_auto_reindexer – Automatic reindexing of PostgreSQL indexes (bloat cleanup)
+## pg_auto_reindexer
+
+#### Automatic reindexing of PostgreSQL indexes (bloat cleanup).
 
 This script automatically detects and reindexes bloated B-tree indexes with minimal locking. For PostgreSQL versions 11 and earlier, it uses [pg_repack](https://github.com/reorg/pg_repack); for PostgreSQL 12 and later, it uses [REINDEX CONCURRENTLY](https://www.postgresql.org/docs/current/sql-reindex.html#SQL-REINDEX-CONCURRENTLY).
 
@@ -52,6 +54,18 @@ Other options:
 Example:
   pg_auto_reindexer --index-bloat=40 --maintenance-start=0100 --maintenance-stop=0600
 ```
+
+#### Automation (cron)
+
+You can automate regular bloat cleanup using cron. Example crontab entries:
+```bash
+# pg_auto_reindexer: weekdays, indexes up to 10GB, maintenance window until 6 AM
+1 0 * * 1-5 root pg_auto_reindexer --index-bloat=30 --index-maxsize=10240 --maintenance-start=0000 --maintenance-stop=0600
+# pg_auto_reindexer: weekends, indexes larger than 10GB, maintenance window all day
+1 0 * * 6,0 root pg_auto_reindexer --index-bloat=40 --index-minsize=10240 --maintenance-start=0000 --maintenance-stop=2359
+```
+
+Note: Adjust the --index-bloat, --index-minsize, --index-maxsize, and maintenance window parameters based on your environment and operational needs.
 
 ## Compatibility
 all supported PostgreSQL versions
