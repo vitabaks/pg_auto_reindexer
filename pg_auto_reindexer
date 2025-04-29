@@ -2,7 +2,7 @@
 # Author: Vitaliy Kukharik (vitabaks@gmail.com)
 # Title: pg_auto_reindexer - Automatic reindexing of B-tree indexes
 
-version=1.4_dev
+version=1.4
 
 # ========================
 # === Help information ===
@@ -28,6 +28,7 @@ Reindexing options:
   -S, --maintenance-stop=HHMM       Maintenance window stop (24h format)
   -t, --bloat-search-method=METHOD  Bloat detection method: estimate | pgstattuple (default: estimate)
   -l, --failed-reindex-limit=N      Max reindex failures before skipping DB (default: 0)
+  -j, --jobs=N                      Number of parallel workers for reindex (default: 1)
 
 Other options:
   -v, --version                     Show version information and exit
@@ -66,6 +67,7 @@ while [[ $# -gt 0 ]]; do
     -S|--maintenance-stop)      MAINTENANCE_STOP="$2"; shift 2;;
     -t|--bloat-search-method)   BLOAT_SEARCH_METHOD="$2"; shift 2;;
     -l|--failed-reindex-limit)  FAILED_REINDEX_LIMIT="$2"; shift 2;;
+    -j|--jobs)                  PARALLEL_JOBS="$2"; shift 2;;
     -v|--version)               echo "pg_auto_reindexer v${version}"; exit;;
     -?|--help)                  help;;
     *)
@@ -104,9 +106,20 @@ PG_VERSION=$(
 # Disable statement_timeout and set lock_timeout
 PGOPTIONS="-c statement_timeout=0 -c lock_timeout=1s"
 
-# Disable parallel maintenance workers
+# Configure the number of parallel workers for maintenance operations.
+# Note: The actual number of workers may be less than requested due to system limits (max_parallel_workers).
+# Setting this value to 0 (default) disables the use of parallel workers.
 if [[ "${PG_VERSION}" -ge 11 ]]; then
-  PGOPTIONS+=" -c max_parallel_maintenance_workers=0"
+  if [[ -z "${PARALLEL_JOBS}" ]]; then
+    PGOPTIONS+=" -c max_parallel_maintenance_workers=0"
+  else
+    PGOPTIONS+=" -c max_parallel_maintenance_workers=$((PARALLEL_JOBS - 1))"
+  fi
+else
+  if [[ -n "${PARALLEL_JOBS}" ]]; then
+    echo "Parallel workers option (-j/--jobs) is not supported for PostgreSQL ${PG_VERSION}."
+    exit
+  fi
 fi
 
 # Index bloat detection query
