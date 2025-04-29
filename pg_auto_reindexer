@@ -298,8 +298,24 @@ function check_index_size(){
 
 function maintenance_window(){
   if [[ -n "${MAINTENANCE_START}" ]] && [[ -n "${MAINTENANCE_STOP}" ]]; then
-    currentTime=$(date "+%H%M")
-    if [[ "${currentTime}" -lt "${MAINTENANCE_START}" ]] || [[ "${currentTime}" -gt "${MAINTENANCE_STOP}" ]]; then
+    currentTime=$((10#$(date "+%H%M")))
+    start=$((10#${MAINTENANCE_START}))
+    stop=$((10#${MAINTENANCE_STOP}))
+    out_of_window=false
+
+    if [[ "${start}" -le "${stop}" ]]; then
+      # Window does NOT cross midnight
+      if [[ "${currentTime}" -lt "${start}" || "${currentTime}" -gt "${stop}" ]]; then
+        out_of_window=true
+      fi
+    else
+      # Window CROSSES midnight
+      if [[ "${currentTime}" -gt "${stop}" && "${currentTime}" -lt "${start}" ]]; then
+        out_of_window=true
+      fi
+    fi
+
+    if [[ "${out_of_window}" == true ]]; then
       warnmsg "Current time: $(date "+%R %Z"). This is outside of the maintenance window: $(date --date="${MAINTENANCE_START}" "+%R")-$(date --date="${MAINTENANCE_STOP}" "+%R"). Exit."
       exit
     fi
