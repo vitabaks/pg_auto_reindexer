@@ -24,6 +24,7 @@ Output example:
 ```
 2025-04-28 01:00:57 INFO: Started index maintenance for database: casdb
 2025-04-28 01:00:58 INFO:  no bloat indexes were found
+2025-04-28 01:00:58 INFO: Completed index maintenance for database: casdb (released: 0 MB)
 2025-04-28 01:01:00 INFO: Started index maintenance for database: crsdb
 2025-04-28 01:01:08 INFO:  reindex index carousel.crs_queue_low_head_idx (current size: 180 MB)
 2025-04-28 01:01:33 INFO:  completed reindex carousel.crs_queue_low_head_idx (new size: 26 MB, reduced: 85%)
