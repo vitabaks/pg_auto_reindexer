@@ -276,7 +276,7 @@ function pg_isready(){
     errmsg "PostgreSQL server ${PGHOST}:${PGPORT} no response"
   else
   # in recovery mode?
-  state=$(${_PSQL} -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc 'SELECT pg_is_in_recovery()') 2>/dev/null
+  state=$(${_PSQL} -d "$(echo "${DBNAME}" | awk 'NR==1')" -tAXc 'select pg_is_in_recovery()') 2>/dev/null
     if [[ "${state}" = "t" ]]; then
       warnmsg "This server is in recovery mode. Index maintenance will not be performed on that server."
       exit
@@ -398,7 +398,7 @@ process_reindex() {
 # Check current time
 maintenance_window
 
-# Perform reindexing for each database
+# Perform reindexing
 total_maintenance_benefit=0
 db_count=0
 
@@ -409,12 +409,12 @@ for db in ${DBNAME}; do
   if pg_isready; then
     info "Started index maintenance for database: ${db}"
 
-    if [[ "${BLOAT_SEARCH_METHOD}" = "pgstattuple" ]]; then
-      create_extension_pgstattuple
-    fi
-
     if [[ "${PG_VERSION}" -le 11 ]]; then
       create_extension_pg_repack
+    fi
+
+    if [[ "${BLOAT_SEARCH_METHOD}" = "pgstattuple" ]]; then
+      create_extension_pgstattuple
     fi
 
     bloat_indexes=$(${_PSQL} -d "${db}" -tAXc "${INDEX_BLOAT_SQL}")
