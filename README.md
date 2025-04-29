@@ -56,6 +56,7 @@ Reindexing options:
   -S, --maintenance-stop=HHMM       Maintenance window stop (24h format)
   -t, --bloat-search-method=METHOD  Bloat detection method: estimate | pgstattuple (default: estimate)
   -l, --failed-reindex-limit=N      Max reindex failures before skipping DB (default: 0)
+  -j, --jobs=N                      Number of parallel workers for reindex (default: 1)
 
 Other options:
   -v, --version                     Show version information and exit
