@@ -93,7 +93,8 @@ _PSQL="psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER}"
 
 if [[ -z "${DBNAME}" ]]; then
   if ! DBNAME=$(${_PSQL} -d postgres -tAXc "select datname from pg_database where not datistemplate"); then
-    errmsg "Unable to connect to database postgres on ${PGHOST}:${PGPORT}"
+    echo "Unable to connect to database postgres on ${PGHOST}:${PGPORT}"
+    exit 1
   fi
 fi
 
@@ -118,7 +119,7 @@ if [[ "${PG_VERSION}" -ge 11 ]]; then
 else
   if [[ -n "${PARALLEL_JOBS}" ]]; then
     echo "Parallel workers option (-j/--jobs) is not supported for PostgreSQL ${PG_VERSION}."
-    exit
+    exit 1
   fi
 fi
 

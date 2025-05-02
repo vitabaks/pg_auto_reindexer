@@ -4,14 +4,13 @@
 
 pg_auto_reindexer automatically detects and reindexes bloated B-tree indexes with minimal locking. For PostgreSQL versions 11 and earlier, it uses [pg_repack](https://github.com/reorg/pg_repack); for PostgreSQL 12 and later, it uses [REINDEX CONCURRENTLY](https://www.postgresql.org/docs/current/sql-reindex.html#SQL-REINDEX-CONCURRENTLY).
 
----
+![image](/reindex_image.jpeg)
+
 **Why do I need index maintenance?**
 
 Over time, PostgreSQL indexes are prone to bloat. This occurs because updates, deletes, and inserts happen continuously, while concurrent transactions may still hold snapshots of old data. As a result, empty and unused pages accumulate inside the indexes, causing them to grow unnecessarily large. This leads to increased disk usage, slower read operations, and gradual degradation of overall database performance.
 
 Regular monitoring of index health and timely reindexing are essential to keep your database running efficiently and to prevent performance issues from growing unnoticed.
-
----
 
 ## Usage example
 
