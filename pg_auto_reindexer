@@ -440,7 +440,7 @@ maintenance_window
 total_maintenance_benefit=0
 db_count=0
 
-for db in ${DBNAME}; do
+while IFS= read -r db; do
   db_count=$((db_count + 1))
   db_maintenance_benefit=0
 
@@ -495,7 +495,7 @@ for db in ${DBNAME}; do
 
     total_maintenance_benefit=$((total_maintenance_benefit + db_maintenance_benefit))
   fi
-done
+done < <(echo "${DBNAME}")
 
 if (( db_count > 1 )); then
   info "Total amount released during maintenance: ${total_maintenance_benefit} MB"
