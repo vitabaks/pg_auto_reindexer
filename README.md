@@ -66,26 +66,10 @@ Example:
   pg_auto_reindexer --index-bloat=40 --maintenance-start=0100 --maintenance-stop=0600
 ```
 
-#### Automation (cron)
-
-You can automate regular bloat cleanup using cron. Example:
-
-`/etc/cron.d/pg_auto_reindexer`
-
-```bash
-# pg_auto_reindexer: weekdays
-1 0 * * 1-5 postgres pg_auto_reindexer --index-bloat=30 --index-maxsize=1024 --maintenance-start=0000 --maintenance-stop=0600
-# pg_auto_reindexer: weekends
-1 0 * * 6,0 postgres pg_auto_reindexer --index-bloat=30 --index-minsize=1024 --maintenance-start=0000 --maintenance-stop=2359
-```
-
-Note: Adjust the options and maintenance window based on your environment and operational needs.
-
 ## Compatibility
 all supported PostgreSQL versions
 
 ## Dependencies:
-
 For old PostgreSQL versions (11 and below) the [pg_repack](https://github.com/reorg/pg_repack) extension package must be installed.
 
 ## Installation
@@ -99,10 +83,30 @@ sudo mv pg_auto_reindexer /usr/local/bin/
 sudo chmod +x /usr/local/bin/pg_auto_reindexer
 ```
 
+## Automating (cron)
+You can automate regular index maintenance by scheduling `pg_auto_reindexer` with `cron`.
+
+For example, add the following to `/etc/cron.d/pg_auto_reindexer`:
+
+```bash
+# pg_auto_reindexer: weekdays
+1 0 * * 1-5 root /usr/local/bin/pg_auto_reindexer --index-bloat=30 --index-maxsize=1024 --maintenance-start=0000 --maintenance-stop=0600
+# pg_auto_reindexer: weekends
+1 0 * * 6,0 root /usr/local/bin/pg_auto_reindexer --index-bloat=30 --index-minsize=1024 --maintenance-start=0000 --maintenance-stop=2359
+```
+
+Note: Adjust the options and maintenance window based on your environment and operational needs.
+
 ## Logging
-By default, the script execution is written in syslog. Get the pg_auto_reindexer log:
+By default, pg_auto_reindexer logs messages to syslog via the logger utility.
+
+You can view the logs using:
 ```
 sudo grep pg_auto_reindexer /var/log/syslog
+```
+Or with journalctl:
+```
+sudo journalctl -t pg_auto_reindexer -n 100
 ```
 
 ## License
