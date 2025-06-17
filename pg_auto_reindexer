@@ -29,6 +29,7 @@ Reindexing options:
   -t, --bloat-search-method=METHOD  Bloat detection method: estimate | pgstattuple (default: estimate)
   -l, --failed-reindex-limit=N      Max reindex failures before skipping DB (default: 0)
   -j, --jobs=N                      Number of parallel workers for reindex (default: 1)
+  -o, --sorting-order=(asc|desc)    Defines the sorting order of indexes by size (default: asc)
 
 Other options:
   -v, --version                     Show version information and exit
@@ -68,6 +69,7 @@ while [[ $# -gt 0 ]]; do
     -t|--bloat-search-method)   BLOAT_SEARCH_METHOD="$2"; shift 2;;
     -l|--failed-reindex-limit)  FAILED_REINDEX_LIMIT="$2"; shift 2;;
     -j|--jobs)                  PARALLEL_JOBS="$2"; shift 2;;
+    -o|--sorting-order)         SORTING_ORDER="$2"; shift 2;;
     -v|--version)               echo "pg_auto_reindexer v${version}"; exit;;
     -?|--help)                  help;;
     *)
@@ -88,6 +90,7 @@ if [[ -z "${BLOAT_SEARCH_METHOD}" ]]; then BLOAT_SEARCH_METHOD="estimate"; fi
 if [[ -z "${INDEX_MINSIZE}" ]]; then INDEX_MINSIZE="1"; fi
 if [[ -z "${INDEX_MAXSIZE}" ]]; then INDEX_MAXSIZE="1000000"; fi
 if [[ -z "${FAILED_REINDEX_LIMIT}" ]]; then FAILED_REINDEX_LIMIT="0"; fi
+if [[ -z "${SORTING_ORDER}" ]]; then SORTING_ORDER="asc"; fi
 
 _PSQL="psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER}"
 
@@ -150,7 +153,7 @@ from (
 ) t
 where round((free_space*100/index_size)::numeric, 1) >= ${INDEX_BLOAT}
   and index_size::bigint/1024/1024 between ${INDEX_MINSIZE} and ${INDEX_MAXSIZE}
-order by index_size asc;
+order by index_size ${SORTING_ORDER};
 "
 elif [[ "${BLOAT_SEARCH_METHOD}" = "estimate" ]]; then
 # Based on https://github.com/ioguix/pgsql-bloat-estimation/blob/master/btree/btree_bloat.sql
@@ -240,7 +243,7 @@ with bloat_indexes as (
 select index_full_name from bloat_indexes
 where bloat_ratio >= ${INDEX_BLOAT}
   and index_size::bigint/1024/1024 between ${INDEX_MINSIZE} and ${INDEX_MAXSIZE}
-order by index_size asc;
+order by index_size ${SORTING_ORDER};
 "
 fi
 
@@ -254,7 +257,7 @@ function info(){
     read -r msg
     msg="  ${msg}"
   fi
-  echo -e "$(date "+%F %T") INFO: ${msg}"
+  echo -e "$(date "+%F %T.%3N") INFO: ${msg}"
   logger -p user.notice -t "$(basename "$0")" "${msg}"
 }
 
@@ -268,7 +271,7 @@ function warnmsg(){
       return 0
     fi
   fi
-  echo -e "$(date "+%F %T") WARN: ${msg}"
+  echo -e "$(date "+%F %T.%3N") WARN: ${msg}"
   logger -p user.notice -t "$(basename "$0")" "${msg}"
   return 1
 }
@@ -280,7 +283,7 @@ function errmsg(){
     read -r msg
     msg="  ${msg}"
   fi
-  echo -e "$(date "+%F %T") ERROR: ${msg}"
+  echo -e "$(date "+%F %T.%3N") ERROR: ${msg}"
   logger -p user.error -t "$(basename "$0")" "${msg}"
   exit 1
 }
@@ -448,14 +451,16 @@ for db in ${DBNAME}; do
     fi
 
     bloat_indexes=$(${_PSQL} -d "${db}" -tAXc "${INDEX_BLOAT_SQL}")
-
     if [[ -n "${bloat_indexes}" ]]; then
+      index_count=$(echo "$bloat_indexes"|wc -l)
+      info "${index_count} indexes have been found for reindexing"
+      i=1
       for index in ${bloat_indexes}; do
         pg_isready
         maintenance_window
 
         index_size_before=$(check_index_size "${index}")
-        info " reindex index ${index} (current size: ${index_size_before} MB)"
+        info "[$i/${index_count}] reindex index ${index} (current size: ${index_size_before} MB)"
 
         process_reindex "${index}"
 
@@ -466,10 +471,11 @@ for db in ${DBNAME}; do
           else
             saved_percent=0
           fi
-          info " completed reindex ${index} (new size: ${index_size_after} MB, reduced: ${saved_percent}%)"
+          info "[$i/${index_count}] completed reindex ${index} (new size: ${index_size_after} MB, reduced: ${saved_percent}%)"
         fi
 
         db_maintenance_benefit=$((db_maintenance_benefit + index_size_before - index_size_after))
+        ((i++))
       done
     else
       info " no bloat indexes were found"
