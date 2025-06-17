@@ -92,6 +92,11 @@ if [[ -z "${INDEX_MAXSIZE}" ]]; then INDEX_MAXSIZE="1000000"; fi
 if [[ -z "${FAILED_REINDEX_LIMIT}" ]]; then FAILED_REINDEX_LIMIT="0"; fi
 if [[ -z "${SORTING_ORDER}" ]]; then SORTING_ORDER="asc"; fi
 
+if [[ "${SORTING_ORDER}" != "asc" && "${SORTING_ORDER}" != "desc" ]]; then
+  echo "Invalid sorting order: ${SORTING_ORDER}. Allowed values: asc, desc."
+  exit 1
+fi
+
 _PSQL="psql -h ${PGHOST} -p ${PGPORT} -U ${DBUSER}"
 
 if [[ -z "${DBNAME}" ]]; then
