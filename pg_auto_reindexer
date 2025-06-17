@@ -440,7 +440,7 @@ maintenance_window
 total_maintenance_benefit=0
 db_count=0
 
-for db in ${DBNAME}; do
+while IFS= read -r db; do
   db_count=$((db_count + 1))
   db_maintenance_benefit=0
 
@@ -460,7 +460,7 @@ for db in ${DBNAME}; do
       index_count=$(echo "$bloat_indexes"|wc -l)
       info "${index_count} indexes have been found for reindexing"
       i=1
-      for index in ${bloat_indexes}; do
+      while IFS= read -r index; do
         pg_isready
         maintenance_window
 
@@ -481,7 +481,7 @@ for db in ${DBNAME}; do
 
         db_maintenance_benefit=$((db_maintenance_benefit + index_size_before - index_size_after))
         ((i++))
-      done
+      done < <(echo "${bloat_indexes}")
     else
       info " no bloat indexes were found"
     fi
@@ -495,7 +495,7 @@ for db in ${DBNAME}; do
 
     total_maintenance_benefit=$((total_maintenance_benefit + db_maintenance_benefit))
   fi
-done
+done < <(echo "${DBNAME}")
 
 if (( db_count > 1 )); then
   info "Total amount released during maintenance: ${total_maintenance_benefit} MB"
