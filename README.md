@@ -68,15 +68,18 @@ Example:
 
 #### Automation (cron)
 
-You can automate regular bloat cleanup using cron. Example crontab entries:
+You can automate regular bloat cleanup using cron. Example:
+
+`/etc/cron.d/pg_auto_reindexer`
+
 ```bash
-# pg_auto_reindexer: weekdays, indexes up to 10GB, maintenance window until 6 AM
-1 0 * * 1-5 root pg_auto_reindexer --index-bloat=30 --index-maxsize=10240 --maintenance-start=0000 --maintenance-stop=0600
-# pg_auto_reindexer: weekends, indexes larger than 10GB, maintenance window all day
-1 0 * * 6,0 root pg_auto_reindexer --index-bloat=40 --index-minsize=10240 --maintenance-start=0000 --maintenance-stop=2359
+# pg_auto_reindexer: weekdays
+1 0 * * 1-5 postgres pg_auto_reindexer --index-bloat=30 --index-maxsize=1024 --maintenance-start=0000 --maintenance-stop=0600
+# pg_auto_reindexer: weekends
+1 0 * * 6,0 postgres pg_auto_reindexer --index-bloat=30 --index-minsize=1024 --maintenance-start=0000 --maintenance-stop=2359
 ```
 
-Note: Adjust the --index-bloat, --index-minsize, --index-maxsize, and maintenance window parameters based on your environment and operational needs.
+Note: Adjust the options and maintenance window based on your environment and operational needs.
 
 ## Compatibility
 all supported PostgreSQL versions
