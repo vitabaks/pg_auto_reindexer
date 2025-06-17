@@ -2,7 +2,7 @@
 # Author: Vitaliy Kukharik (vitabaks@gmail.com)
 # Title: pg_auto_reindexer - Automatic reindexing of B-tree indexes
 
-version=1.4
+version=1.5-dev
 
 # ========================
 # === Help information ===
