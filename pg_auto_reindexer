@@ -2,7 +2,7 @@
 # Author: Vitaliy Kukharik (vitabaks@gmail.com)
 # Title: pg_auto_reindexer - Automatic reindexing of B-tree indexes
 
-version=1.5
+version=1.6
 
 # ========================
 # === Help information ===
@@ -346,27 +346,38 @@ function maintenance_window(){
 
 drop_invalid_index() {
   local index="$1"
+  local status="$2"
   local invalid_index_name
 
   if [[ ${PG_VERSION} -le 11 ]]; then
     invalid_index_name="index_${index}"
   else
-    invalid_index_name="${index}_ccnew"
+    invalid_index_name="${index}_cc(new|old)[0-9]*$"
   fi
 
-  invalid_index=$(${_PSQL} -d "${db}" -tAXc "
+  invalid_indexes=$(${_PSQL} -d "${db}" -tAXc "
     select format('%I.%I', schemaname, indexrelname)
     from pg_stat_user_indexes
     join pg_index using (indexrelid)
     where not indisvalid
-      and format('%I.%I', schemaname, indexrelname) = '${invalid_index_name}'
+      and format('%I.%I', schemaname, indexrelname) ~ '${invalid_index_name}'
   ")
 
-  if [[ -n "${invalid_index}" ]]; then
-    info " Invalid index detected: ${invalid_index}. Dropping."
-    if ! output=$(${_PSQL} -d "${db}" -tAXc "DROP INDEX CONCURRENTLY ${invalid_index}" 2>&1); then
-      warnmsg " Failed to drop invalid index ${invalid_index}: ${output}"
-    fi
+  if [[ -n "${invalid_indexes}" ]]; then
+    while IFS= read -r invalid_index; do
+      info " Invalid index detected: ${invalid_index}. Dropping."
+      if ! output=$(${_PSQL} -d "${db}" -tAXc "DROP INDEX CONCURRENTLY ${invalid_index}" 2>&1); then
+        warnmsg " Failed to drop invalid index ${invalid_index}: ${output}"
+      fi
+      if [[ "${status}" == false ]] && [[ "$(echo "$invalid_indexes" | wc -w)" -eq 1 ]]; then
+        if [[ "${invalid_index}" == *_ccold ]]; then
+          info " Invalid index has a name with the suffix \"_ccold\". Stopping the reindex attempt."
+          ccold_index=true
+        else
+          ccold_index=false
+        fi
+      fi
+    done <<< "${invalid_indexes}"
   fi
 }
 
@@ -401,6 +412,9 @@ process_reindex() {
   local retry_n=0
   local delays=(0 10 30 60)
 
+  # Drop INVALID ccnew/ccold indexes (if any) before starting REINDEX
+  drop_invalid_index "${index}" 
+
   for delay in "${delays[@]}"; do
     sleep "${delay}"
 
@@ -417,8 +431,12 @@ process_reindex() {
     if [[ "${success}" == true ]]; then
       return 0
     else
-      drop_invalid_index "${index}"
-      retry_n=$((retry_n + 1))
+      drop_invalid_index "${index}" "${success}"
+      if [[ "${ccold_index}" == true ]]; then
+        return 0
+      else
+        retry_n=$((retry_n + 1))
+      fi
     fi
 
     if [[ "${delay}" -eq 60 ]]; then
