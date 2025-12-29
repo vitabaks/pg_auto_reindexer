@@ -115,6 +115,11 @@ PG_VERSION=$(
 # Disable statement_timeout and set lock_timeout
 PGOPTIONS="-c statement_timeout=0 -c lock_timeout=1s"
 
+# transaction_timeout exists since PG 17, so add it only for PG>=17.
+if [[ "${PG_VERSION}" -ge 17 ]]; then
+  PGOPTIONS+=" -c transaction_timeout=0"
+fi
+
 # Configure the number of parallel workers for maintenance operations.
 # Note: The actual number of workers may be less than requested due to system limits (max_parallel_workers).
 # Setting this value to 0 (default) disables the use of parallel workers.
