@@ -2,7 +2,7 @@
 # Author: Vitaliy Kukharik (vitabaks@gmail.com)
 # Title: pg_auto_reindexer - Automatic reindexing of B-tree indexes
 
-version=1.6
+version=1.7
 
 # ========================
 # === Help information ===
@@ -323,6 +323,48 @@ function check_index_size(){
   ${_PSQL} -d "${db}" -tAXc "select pg_relation_size('$1')/1024/1024"
 }
 
+# --- Disk free space safety checks (PGDATA filesystem) ---
+# Free space check for REINDEX:
+# During REINDEX (especially REINDEX CONCURRENTLY) Postgres build a second copy of the index,
+# so worst-case peak usage requires roughly one extra index size on top of existing data.
+# We also keep a fixed reserve (1GB by default), e.q., for WAL growth on the same filesystem.
+: "${PG_AUTO_REINDEXER_DISK_FREE_RESERVE_MB:=1024}" # fixed headroom on top of index size (you can redefine it in env)
+
+function get_pgdata_dir() {
+  ${_PSQL} -d "${db}" -tAXc "show data_directory"
+}
+
+function get_pgdata_avail_mb() {
+  local pgdata_dir
+  pgdata_dir="$(get_pgdata_dir 2>/dev/null | awk 'NF{print; exit}')"
+  [[ -n "${pgdata_dir}" ]] || return 1
+  command -v df >/dev/null 2>&1 || return 1
+  # POSIX output, MB blocks
+  df -Pm "${pgdata_dir}" 2>/dev/null | awk 'NR==2{print $4}'
+}
+
+function ensure_pgdata_free_space() {
+  local index_mb="$1"
+  local index_name="$2"
+  local avail_mb
+  local required_mb
+
+  avail_mb="$(get_pgdata_avail_mb)" || {
+    warnmsg " Unable to verify free space on PGDATA filesystem."
+    return 1
+  }
+
+  # integer math for factor: required = current index size + reserve
+  required_mb=$(( index_mb + PG_AUTO_REINDEXER_DISK_FREE_RESERVE_MB ))
+
+  if (( avail_mb < required_mb )); then
+    warnmsg " Insufficient free space on PGDATA filesystem (avail: ${avail_mb} MB, required: ${required_mb} MB)."
+    return 1
+  fi
+
+  return 0
+}
+
 function maintenance_window(){
   if [[ -n "${MAINTENANCE_START}" ]] && [[ -n "${MAINTENANCE_STOP}" ]]; then
     currentTime=$((10#$(date "+%H%M")))
@@ -417,8 +459,11 @@ process_reindex() {
   local retry_n=0
   local delays=(0 10 30 60)
 
+  ccold_index=false
+  success=false
+
   # Drop INVALID ccnew/ccold indexes (if any) before starting REINDEX
-  drop_invalid_index "${index}" 
+  drop_invalid_index "${index}"
 
   for delay in "${delays[@]}"; do
     sleep "${delay}"
@@ -466,6 +511,7 @@ db_count=0
 while IFS= read -r db; do
   db_count=$((db_count + 1))
   db_maintenance_benefit=0
+  failed_reindex_count=0
 
   if pg_isready; then
     info "Started index maintenance for database: ${db}"
@@ -488,18 +534,25 @@ while IFS= read -r db; do
         maintenance_window
 
         index_size_before=$(check_index_size "${index}")
+        index_size_after="${index_size_before}" # default for failed/skip paths
+
         info "[$i/${index_count}] reindex index ${index} (current size: ${index_size_before} MB)"
 
-        process_reindex "${index}"
+        if ensure_pgdata_free_space "${index_size_before}" "${index}"; then
+          process_reindex "${index}"
 
-        if [[ "${success}" == true ]]; then
-          index_size_after=$(check_index_size "${index}")
-          if (( index_size_before > 0 )); then
-            saved_percent=$(( (index_size_before - index_size_after) * 100 / index_size_before ))
-          else
-            saved_percent=0
+          if [[ "${success}" == true ]]; then
+            index_size_after=$(check_index_size "${index}")
+            if (( index_size_before > 0 )); then
+              saved_percent=$(( (index_size_before - index_size_after) * 100 / index_size_before ))
+            else
+              saved_percent=0
+            fi
+            info "[$i/${index_count}] completed reindex ${index} (new size: ${index_size_after} MB, reduced: ${saved_percent}%)"
           fi
-          info "[$i/${index_count}] completed reindex ${index} (new size: ${index_size_after} MB, reduced: ${saved_percent}%)"
+        else
+          warnmsg " Stopping index maintenance for database: ${db} due to insufficient disk space (failed on ${index}, size: ${index_size_before} MB)."
+          break
         fi
 
         db_maintenance_benefit=$((db_maintenance_benefit + index_size_before - index_size_after))
