@@ -326,8 +326,8 @@ function check_index_size(){
 # --- Disk free space safety checks (PGDATA filesystem) ---
 # During REINDEX CONCURRENTLY Postgres build a second copy of the index,
 # so worst-case peak usage requires roughly one extra index size on top of existing data.
-# We also keep a fixed reserve (1GB by default), e.q., for WAL growth on the same filesystem.
-: "${PG_AUTO_REINDEXER_DISK_FREE_RESERVE_MB:=1024}" # fixed headroom on top of index size (you can redefine it in env)
+# We also keep a fixed reserve (5GB by default), e.q., for WAL growth on the same filesystem.
+: "${PG_AUTO_REINDEXER_DISK_FREE_RESERVE_MB:=5120}" # fixed headroom on top of index size (you can redefine it in env)
 
 function get_pgdata_dir() {
   ${_PSQL} -d "${db}" -tAXc "show data_directory"
