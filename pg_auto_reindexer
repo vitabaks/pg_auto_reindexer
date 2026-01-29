@@ -437,7 +437,7 @@ function ensure_free_space() {
   }
 
   if (( avail_mb < required_mb )); then
-    warnmsg " Insufficient free space for ${index} (index tablespace): avail ${avail_mb} MB at ${index_dir}, need ${required_mb} MB (index size ${index_mb} MB + reserve ${DISK_FREE_RESERVE_MB} MB)."
+    warnmsg " Insufficient free space for index tablespace: avail ${avail_mb} MB at ${index_dir}, need ${required_mb} MB (index size ${index_mb} MB + reserve ${DISK_FREE_RESERVE_MB} MB)."
     return 1
   fi
 
@@ -449,7 +449,7 @@ function ensure_free_space() {
   }
 
   if (( avail_mb < required_mb )); then
-    warnmsg " Insufficient free space on data directory filesystem: avail ${avail_mb} MB at ${data_dir}, need reserve ${DISK_FREE_RESERVE_MB} MB (WAL/temp safety)."
+    warnmsg " Insufficient free space on data directory: avail ${avail_mb} MB at ${data_dir}, need reserve ${DISK_FREE_RESERVE_MB} MB (WAL/temp safety)."
     return 1
   fi
 
