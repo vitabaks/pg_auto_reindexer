@@ -337,7 +337,7 @@ function get_pgdata_avail_mb() {
   local pgdata_dir
   pgdata_dir="$(get_pgdata_dir 2>/dev/null | awk 'NF{print; exit}')"
   [[ -n "${pgdata_dir}" ]] || return 1
-  command -v df >/dev/null 2>&1 || return 1
+
   # POSIX output, MB blocks
   df -Pm "${pgdata_dir}" 2>/dev/null | awk 'NR==2{print $4}'
 }
@@ -357,7 +357,7 @@ function ensure_pgdata_free_space() {
   required_mb=$(( index_mb + PG_AUTO_REINDEXER_DISK_FREE_RESERVE_MB ))
 
   if (( avail_mb < required_mb )); then
-    warnmsg " Insufficient free space on PGDATA filesystem (avail: ${avail_mb} MB, required: ${required_mb} MB)."
+    warnmsg " Insufficient free space on PGDATA filesystem: avail ${avail_mb} MB, need ${required_mb} MB (index size ${index_mb} MB + reserve ${PG_AUTO_REINDEXER_DISK_FREE_RESERVE_MB} MB)."
     return 1
   fi
 
