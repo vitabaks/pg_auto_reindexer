@@ -57,6 +57,7 @@ Reindexing options:
   -l, --failed-reindex-limit=N      Max reindex failures before skipping DB (default: 0)
   -j, --jobs=N                      Number of parallel workers for reindex (default: 1)
   -o, --sorting-order=(asc|desc)    Defines the sorting order of indexes by size (default: asc)
+  -r, --disk-free-reserve=MB        Disk free space reserve in MB (default: 5120)
 
 Other options:
   -v, --version                     Show version information and exit

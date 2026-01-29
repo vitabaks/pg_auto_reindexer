@@ -2,7 +2,7 @@
 # Author: Vitaliy Kukharik (vitabaks@gmail.com)
 # Title: pg_auto_reindexer - Automatic reindexing of B-tree indexes
 
-version=1.6
+version=1.7
 
 # ========================
 # === Help information ===
@@ -30,6 +30,7 @@ Reindexing options:
   -l, --failed-reindex-limit=N      Max reindex failures before skipping DB (default: 0)
   -j, --jobs=N                      Number of parallel workers for reindex (default: 1)
   -o, --sorting-order=(asc|desc)    Defines the sorting order of indexes by size (default: asc)
+  -r, --disk-free-reserve=MB        Disk free space reserve in MB (default: 5120)
 
 Other options:
   -v, --version                     Show version information and exit
@@ -70,6 +71,7 @@ while [[ $# -gt 0 ]]; do
     -l|--failed-reindex-limit)  FAILED_REINDEX_LIMIT="$2"; shift 2;;
     -j|--jobs)                  PARALLEL_JOBS="$2"; shift 2;;
     -o|--sorting-order)         SORTING_ORDER="$2"; shift 2;;
+    -r|--disk-free-reserve)     DISK_FREE_RESERVE_MB="$2"; shift 2;;
     -v|--version)               echo "pg_auto_reindexer v${version}"; exit;;
     -?|--help)                  help;;
     *)
@@ -91,9 +93,15 @@ if [[ -z "${INDEX_MINSIZE}" ]]; then INDEX_MINSIZE="1"; fi
 if [[ -z "${INDEX_MAXSIZE}" ]]; then INDEX_MAXSIZE="1000000"; fi
 if [[ -z "${FAILED_REINDEX_LIMIT}" ]]; then FAILED_REINDEX_LIMIT="0"; fi
 if [[ -z "${SORTING_ORDER}" ]]; then SORTING_ORDER="asc"; fi
+if [[ -z "${DISK_FREE_RESERVE_MB}" ]]; then DISK_FREE_RESERVE_MB="5120"; fi
 
 if [[ "${SORTING_ORDER}" != "asc" && "${SORTING_ORDER}" != "desc" ]]; then
   echo "Invalid sorting order: ${SORTING_ORDER}. Allowed values: asc, desc."
+  exit 1
+fi
+
+if ! [[ "${DISK_FREE_RESERVE_MB}" =~ ^[0-9]+$ ]]; then
+  echo "Invalid --disk-free-reserve option (${DISK_FREE_RESERVE_MB}). An integer is expected."
   exit 1
 fi
 
@@ -323,6 +331,131 @@ function check_index_size(){
   ${_PSQL} -d "${db}" -tAXc "select pg_relation_size('$1')/1024/1024"
 }
 
+# --- Disk free space safety checks (index tablespace filesystem) ---
+# During REINDEX CONCURRENTLY Postgres builds a second copy of the index in the index's tablespace.
+# So worst-case peak usage requires roughly one extra index size on that filesystem.
+# We also keep a fixed reserve (5GB by default), e.g., for WAL/temp files growth on the same filesystem.
+
+function get_pgdata_dir() {
+  ${_PSQL} -d "${db}" -tAXc "
+    select current_setting('data_directory')"
+}
+
+function get_index_dir() {
+  local index="$1"
+
+  # pg_tablespace_location() returns empty for pg_default; fallback to data directory
+  ${_PSQL} -d "${db}" -tAXc "
+    select coalesce(
+      nullif(pg_tablespace_location(c.reltablespace), ''),
+      current_setting('data_directory')
+    )
+    from pg_class c
+    where c.oid = '${index}'::regclass;
+  "
+}
+
+function get_path_avail_mb() {
+  local path="$1"
+  local avail
+
+  [[ -n "${path}" ]] || return 1
+
+  # POSIX output, MB blocks
+  avail="$(df -Pm "${path}" 2>/dev/null | awk 'NR==2{print $4}')"
+  [[ "${avail}" =~ ^[0-9]+$ ]] || return 1
+
+  echo "${avail}"
+}
+
+function get_path_fs_id() {
+  local path="$1"
+  local fs
+
+  [[ -n "${path}" ]] || return 1
+
+  # Filesystem id (device) for this path
+  fs="$(df -P "${path}" 2>/dev/null | awk 'NR==2{print $1}')"
+  [[ -n "${fs}" ]] || return 1
+
+  echo "${fs}"
+}
+
+function ensure_free_space() {
+  local index="$1"
+  local index_mb="$2"
+  local index_dir
+  local data_dir
+  local index_fs
+  local data_fs
+  local avail_mb
+  local required_mb
+
+  index_dir="$(get_index_dir "${index}" 2>/dev/null | awk 'NF{print; exit}')"
+  [[ -n "${index_dir}" ]] || {
+    warnmsg " Unable to determine tablespace directory."
+    return 1
+  }
+
+  data_dir="$(get_pgdata_dir 2>/dev/null | awk 'NF{print; exit}')"
+  [[ -n "${data_dir}" ]] || {
+    warnmsg " Unable to determine data directory."
+    return 1
+  }
+
+  index_fs="$(get_path_fs_id "${index_dir}")" || {
+    warnmsg " Unable to identify filesystem for ${index} (path: ${index_dir})."
+    return 1
+  }
+  data_fs="$(get_path_fs_id "${data_dir}")" || {
+    warnmsg " Unable to identify filesystem for data directory (path: ${data_dir})."
+    return 1
+  }
+
+  # If index and PGDATA are on the same filesystem, check only once (data_dir is enough).
+  if [[ "${index_fs}" == "${data_fs}" ]]; then
+    required_mb=$(( index_mb + DISK_FREE_RESERVE_MB ))
+    avail_mb="$(get_path_avail_mb "${data_dir}")" || {
+      warnmsg " Unable to verify free space on filesystem for ${index} (path: ${data_dir})."
+      return 1
+    }
+
+    if (( avail_mb < required_mb )); then
+      warnmsg " Insufficient free space: avail ${avail_mb} MB at ${data_dir}, need ${required_mb} MB (index size ${index_mb} MB + reserve ${DISK_FREE_RESERVE_MB} MB)."
+      return 1
+    fi
+
+    return 0
+  fi
+
+  # Different filesystems: check BOTH.
+  # 1) Index tablespace FS needs space for new index copy + reserve.
+  required_mb=$(( index_mb + DISK_FREE_RESERVE_MB ))
+  avail_mb="$(get_path_avail_mb "${index_dir}")" || {
+    warnmsg " Unable to verify free space on index filesystem for ${index} (path: ${index_dir})."
+    return 1
+  }
+
+  if (( avail_mb < required_mb )); then
+    warnmsg " Insufficient free space for index tablespace: avail ${avail_mb} MB at ${index_dir}, need ${required_mb} MB (index size ${index_mb} MB + reserve ${DISK_FREE_RESERVE_MB} MB)."
+    return 1
+  fi
+
+  # 2) PGDATA FS needs at least reserve for WAL/temp safety.
+  required_mb=$(( DISK_FREE_RESERVE_MB ))
+  avail_mb="$(get_path_avail_mb "${data_dir}")" || {
+    warnmsg " Unable to verify free space on data directory filesystem (path: ${data_dir})."
+    return 1
+  }
+
+  if (( avail_mb < required_mb )); then
+    warnmsg " Insufficient free space on data directory: avail ${avail_mb} MB at ${data_dir}, need reserve ${DISK_FREE_RESERVE_MB} MB (WAL/temp safety)."
+    return 1
+  fi
+
+  return 0
+}
+
 function maintenance_window(){
   if [[ -n "${MAINTENANCE_START}" ]] && [[ -n "${MAINTENANCE_STOP}" ]]; then
     currentTime=$((10#$(date "+%H%M")))
@@ -417,8 +550,11 @@ process_reindex() {
   local retry_n=0
   local delays=(0 10 30 60)
 
+  ccold_index=false
+  success=false
+
   # Drop INVALID ccnew/ccold indexes (if any) before starting REINDEX
-  drop_invalid_index "${index}" 
+  drop_invalid_index "${index}"
 
   for delay in "${delays[@]}"; do
     sleep "${delay}"
@@ -466,6 +602,7 @@ db_count=0
 while IFS= read -r db; do
   db_count=$((db_count + 1))
   db_maintenance_benefit=0
+  failed_reindex_count=0
 
   if pg_isready; then
     info "Started index maintenance for database: ${db}"
@@ -488,18 +625,31 @@ while IFS= read -r db; do
         maintenance_window
 
         index_size_before=$(check_index_size "${index}")
+        index_size_after="${index_size_before}" # default for failed/skip paths
+
         info "[$i/${index_count}] reindex index ${index} (current size: ${index_size_before} MB)"
 
-        process_reindex "${index}"
+        if ensure_free_space "${index}" "${index_size_before}"; then
+          process_reindex "${index}"
 
-        if [[ "${success}" == true ]]; then
-          index_size_after=$(check_index_size "${index}")
-          if (( index_size_before > 0 )); then
-            saved_percent=$(( (index_size_before - index_size_after) * 100 / index_size_before ))
-          else
-            saved_percent=0
+          if [[ "${success}" == true ]]; then
+            index_size_after=$(check_index_size "${index}")
+            if (( index_size_before > 0 )); then
+              saved_percent=$(( (index_size_before - index_size_after) * 100 / index_size_before ))
+            else
+              saved_percent=0
+            fi
+            info "[$i/${index_count}] completed reindex ${index} (new size: ${index_size_after} MB, reduced: ${saved_percent}%)"
           fi
-          info "[$i/${index_count}] completed reindex ${index} (new size: ${index_size_after} MB, reduced: ${saved_percent}%)"
+        else
+          if [[ "${SORTING_ORDER}" == "asc" ]]; then
+            warnmsg " Skip index maintenance for database: ${db}"
+            break
+          else
+            warnmsg " Skip ${index} and continue with smaller indexes (sorting: ${SORTING_ORDER})"
+            ((i++))
+            continue
+          fi
         fi
 
         db_maintenance_benefit=$((db_maintenance_benefit + index_size_before - index_size_after))
