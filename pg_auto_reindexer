@@ -2,7 +2,7 @@
 # Author: Vitaliy Kukharik (vitabaks@gmail.com)
 # Title: pg_auto_reindexer - Automatic reindexing of B-tree indexes
 
-version=1.7
+version=1.8
 
 # ========================
 # === Help information ===
@@ -331,44 +331,66 @@ function check_index_size(){
   ${_PSQL} -d "${db}" -tAXc "select pg_relation_size('$1')/1024/1024"
 }
 
-# --- Disk free space safety checks (PGDATA filesystem) ---
-# During REINDEX CONCURRENTLY Postgres build a second copy of the index,
-# so worst-case peak usage requires roughly one extra index size on top of existing data.
+# --- Disk free space safety checks (index tablespace filesystem) ---
+# During REINDEX CONCURRENTLY Postgres builds a second copy of the index in the index's tablespace.
+# So worst-case peak usage requires roughly one extra index size on that filesystem.
 # We also keep a fixed reserve (5GB by default), e.g., for WAL/temp files growth on the same filesystem.
 
 function get_pgdata_dir() {
   ${_PSQL} -d "${db}" -tAXc "show data_directory"
 }
 
-function get_pgdata_avail_mb() {
-  local pgdata_dir
+function get_index_dir() {
+  local index="$1"
+
+  # pg_tablespace_location() returns empty for pg_default; fallback to data directory
+  ${_PSQL} -d "${db}" -tAXc "
+    select coalesce(
+      nullif(pg_tablespace_location(c.reltablespace), ''),
+      current_setting('data_directory')
+    )
+    from pg_class c
+    where c.oid = '${index}'::regclass;
+  "
+}
+
+function get_path_avail_mb() {
+  local path="$1"
   local avail
 
-  pgdata_dir="$(get_pgdata_dir 2>/dev/null | awk 'NF{print; exit}')"
-  [[ -n "${pgdata_dir}" ]] || return 1
+  [[ -n "${path}" ]] || return 1
 
   # POSIX output, MB blocks
-  avail="$(df -Pm "${pgdata_dir}" 2>/dev/null | awk 'NR==2{print $4}')"
-  [[ "${avail}" =~ ^[0-9]+$ ]] || {
-    warnmsg " Unable to verify free space on PGDATA filesystem."
-    return 1
-  }
+  avail="$(df -Pm "${path}" 2>/dev/null | awk 'NR==2{print $4}')"
+  [[ "${avail}" =~ ^[0-9]+$ ]] || return 1
 
   echo "${avail}"
 }
 
-function ensure_pgdata_free_space() {
-  local index_mb="$1"
+function ensure_free_space() {
+  local index="$1"
+  local index_mb="$2"
+  local index_dir
+  local data_dir
   local avail_mb
   local required_mb
 
-  avail_mb="$(get_pgdata_avail_mb)" || return 1
+  dir="$(get_index_dir "${index}" 2>/dev/null | awk 'NF{print; exit}')"
+  [[ -n "${dir}" ]] || {
+    warnmsg " Unable to determine tablespace directory for ${index}."
+    return 1
+  }
+
+  avail_mb="$(get_path_avail_mb "${dir}")" || {
+    warnmsg " Unable to verify free space on filesystem for ${index} (path: ${dir})."
+    return 1
+  }
 
   # integer math for factor: required = current index size + reserve
   required_mb=$(( index_mb + DISK_FREE_RESERVE_MB ))
 
   if (( avail_mb < required_mb )); then
-    warnmsg " Insufficient free space on PGDATA filesystem: avail ${avail_mb} MB, need ${required_mb} MB (index size ${index_mb} MB + reserve ${DISK_FREE_RESERVE_MB} MB)."
+    warnmsg " Insufficient free space for ${index}: avail ${avail_mb} MB at ${dir}, need ${required_mb} MB (index size ${index_mb} MB + reserve ${DISK_FREE_RESERVE_MB} MB)."
     return 1
   fi
 
@@ -548,7 +570,7 @@ while IFS= read -r db; do
 
         info "[$i/${index_count}] reindex index ${index} (current size: ${index_size_before} MB)"
 
-        if ensure_pgdata_free_space "${index_size_before}"; then
+        if ensure_free_space "${index}" "${index_size_before}"; then
           process_reindex "${index}"
 
           if [[ "${success}" == true ]]; then
@@ -569,7 +591,6 @@ while IFS= read -r db; do
             ((i++))
             continue
           fi
-          info "[$i/${index_count}] completed reindex ${index} (new size: ${index_size_after} MB, reduced: ${saved_percent}%)"
         fi
 
         db_maintenance_benefit=$((db_maintenance_benefit + index_size_before - index_size_after))
