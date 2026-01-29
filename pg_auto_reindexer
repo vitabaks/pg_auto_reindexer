@@ -334,7 +334,7 @@ function check_index_size(){
 # --- Disk free space safety checks (PGDATA filesystem) ---
 # During REINDEX CONCURRENTLY Postgres build a second copy of the index,
 # so worst-case peak usage requires roughly one extra index size on top of existing data.
-# We also keep a fixed reserve (5GB by default), e.q., for WAL/temp files growth on the same filesystem.
+# We also keep a fixed reserve (5GB by default), e.g., for WAL/temp files growth on the same filesystem.
 
 function get_pgdata_dir() {
   ${_PSQL} -d "${db}" -tAXc "show data_directory"
@@ -342,11 +342,19 @@ function get_pgdata_dir() {
 
 function get_pgdata_avail_mb() {
   local pgdata_dir
+  local avail
+
   pgdata_dir="$(get_pgdata_dir 2>/dev/null | awk 'NF{print; exit}')"
   [[ -n "${pgdata_dir}" ]] || return 1
 
   # POSIX output, MB blocks
-  df -Pm "${pgdata_dir}" 2>/dev/null | awk 'NR==2{print $4}'
+  avail="$(df -Pm "${pgdata_dir}" 2>/dev/null | awk 'NR==2{print $4}')"
+  [[ "${avail}" =~ ^[0-9]+$ ]] || {
+    warnmsg " Unable to verify free space on PGDATA filesystem."
+    return 1
+  }
+
+  echo "${avail}"
 }
 
 function ensure_pgdata_free_space() {
@@ -354,10 +362,7 @@ function ensure_pgdata_free_space() {
   local avail_mb
   local required_mb
 
-  avail_mb="$(get_pgdata_avail_mb)" || {
-    warnmsg " Unable to verify free space on PGDATA filesystem."
-    return 1
-  }
+  avail_mb="$(get_pgdata_avail_mb)" || return 1
 
   # integer math for factor: required = current index size + reserve
   required_mb=$(( index_mb + DISK_FREE_RESERVE_MB ))
