@@ -550,8 +550,6 @@ while IFS= read -r db; do
             info "[$i/${index_count}] completed reindex ${index} (new size: ${index_size_after} MB, reduced: ${saved_percent}%)"
           fi
         else
-          warnmsg " Not enough free space on PGDATA (failed on ${index}, size: ${index_size_before} MB)."
-
           if [[ "${SORTING_ORDER}" == "asc" ]]; then
             warnmsg " Stopping index maintenance for database: ${db}."
             break
@@ -560,6 +558,7 @@ while IFS= read -r db; do
             ((i++))
             continue
           fi
+          info "[$i/${index_count}] completed reindex ${index} (new size: ${index_size_after} MB, reduced: ${saved_percent}%)"
         fi
 
         db_maintenance_benefit=$((db_maintenance_benefit + index_size_before - index_size_after))
