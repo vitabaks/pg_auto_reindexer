@@ -337,7 +337,8 @@ function check_index_size(){
 # We also keep a fixed reserve (5GB by default), e.g., for WAL/temp files growth on the same filesystem.
 
 function get_pgdata_dir() {
-  ${_PSQL} -d "${db}" -tAXc "show data_directory"
+  ${_PSQL} -d "${db}" -tAXc "
+    select current_setting('data_directory')"
 }
 
 function get_index_dir() {
@@ -367,30 +368,88 @@ function get_path_avail_mb() {
   echo "${avail}"
 }
 
+function get_path_fs_id() {
+  local path="$1"
+  local fs
+
+  [[ -n "${path}" ]] || return 1
+
+  # Filesystem id (device) for this path
+  fs="$(df -P "${path}" 2>/dev/null | awk 'NR==2{print $1}')"
+  [[ -n "${fs}" ]] || return 1
+
+  echo "${fs}"
+}
+
 function ensure_free_space() {
   local index="$1"
   local index_mb="$2"
   local index_dir
   local data_dir
+  local index_fs
+  local data_fs
   local avail_mb
   local required_mb
 
-  dir="$(get_index_dir "${index}" 2>/dev/null | awk 'NF{print; exit}')"
-  [[ -n "${dir}" ]] || {
-    warnmsg " Unable to determine tablespace directory for ${index}."
+  index_dir="$(get_index_dir "${index}" 2>/dev/null | awk 'NF{print; exit}')"
+  [[ -n "${index_dir}" ]] || {
+    warnmsg " Unable to determine tablespace directory."
     return 1
   }
 
-  avail_mb="$(get_path_avail_mb "${dir}")" || {
-    warnmsg " Unable to verify free space on filesystem for ${index} (path: ${dir})."
+  data_dir="$(get_pgdata_dir 2>/dev/null | awk 'NF{print; exit}')"
+  [[ -n "${data_dir}" ]] || {
+    warnmsg " Unable to determine data directory."
     return 1
   }
 
-  # integer math for factor: required = current index size + reserve
+  index_fs="$(get_path_fs_id "${index_dir}")" || {
+    warnmsg " Unable to identify filesystem for ${index} (path: ${index_dir})."
+    return 1
+  }
+  data_fs="$(get_path_fs_id "${data_dir}")" || {
+    warnmsg " Unable to identify filesystem for data directory (path: ${data_dir})."
+    return 1
+  }
+
+  # If index and PGDATA are on the same filesystem, check only once (data_dir is enough).
+  if [[ "${index_fs}" == "${data_fs}" ]]; then
+    required_mb=$(( index_mb + DISK_FREE_RESERVE_MB ))
+    avail_mb="$(get_path_avail_mb "${data_dir}")" || {
+      warnmsg " Unable to verify free space on filesystem for ${index} (path: ${data_dir})."
+      return 1
+    }
+
+    if (( avail_mb < required_mb )); then
+      warnmsg " Insufficient free space for ${index}: avail ${avail_mb} MB at ${data_dir}, need ${required_mb} MB (index size ${index_mb} MB + reserve ${DISK_FREE_RESERVE_MB} MB)."
+      return 1
+    fi
+
+    return 0
+  fi
+
+  # Different filesystems: check BOTH.
+  # 1) Index tablespace FS needs space for new index copy + reserve.
   required_mb=$(( index_mb + DISK_FREE_RESERVE_MB ))
+  avail_mb="$(get_path_avail_mb "${index_dir}")" || {
+    warnmsg " Unable to verify free space on index filesystem for ${index} (path: ${index_dir})."
+    return 1
+  }
 
   if (( avail_mb < required_mb )); then
-    warnmsg " Insufficient free space for ${index}: avail ${avail_mb} MB at ${dir}, need ${required_mb} MB (index size ${index_mb} MB + reserve ${DISK_FREE_RESERVE_MB} MB)."
+    warnmsg " Insufficient free space for ${index} (index tablespace): avail ${avail_mb} MB at ${index_dir}, need ${required_mb} MB (index size ${index_mb} MB + reserve ${DISK_FREE_RESERVE_MB} MB)."
+    return 1
+  fi
+
+  # 2) PGDATA FS needs at least reserve for WAL/temp safety.
+  required_mb=$(( DISK_FREE_RESERVE_MB ))
+  avail_mb="$(get_path_avail_mb "${data_dir}")" || {
+    warnmsg " Unable to verify free space on data directory filesystem (path: ${data_dir})."
+    return 1
+  }
+
+  if (( avail_mb < required_mb )); then
+    warnmsg " Insufficient free space on data directory filesystem: avail ${avail_mb} MB at ${data_dir}, need reserve ${DISK_FREE_RESERVE_MB} MB (WAL/temp safety)."
     return 1
   fi
 
