@@ -344,7 +344,6 @@ function get_pgdata_avail_mb() {
 
 function ensure_pgdata_free_space() {
   local index_mb="$1"
-  local index_name="$2"
   local avail_mb
   local required_mb
 
@@ -537,7 +536,7 @@ while IFS= read -r db; do
 
         info "[$i/${index_count}] reindex index ${index} (current size: ${index_size_before} MB)"
 
-        if ensure_pgdata_free_space "${index_size_before}" "${index}"; then
+        if ensure_pgdata_free_space "${index_size_before}"; then
           process_reindex "${index}"
 
           if [[ "${success}" == true ]]; then
