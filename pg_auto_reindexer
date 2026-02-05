@@ -504,7 +504,7 @@ drop_invalid_index() {
   if [[ -n "${invalid_indexes}" ]]; then
     while IFS= read -r invalid_index; do
       info " Invalid index detected: ${invalid_index}. Dropping."
-      if ! output=$(${_PSQL} -d "${db}" -tAXc "DROP INDEX CONCURRENTLY ${invalid_index}" 2>&1); then
+      if ! output=$(PGOPTIONS="${PGOPTIONS}" ${_PSQL} -d "${db}" -tAXc "DROP INDEX CONCURRENTLY ${invalid_index}" 2>&1); then
         warnmsg " Failed to drop invalid index ${invalid_index}: ${output}"
       fi
       if [[ "${status}" == false ]] && [[ "$(echo "$invalid_indexes" | wc -w)" -eq 1 ]]; then
