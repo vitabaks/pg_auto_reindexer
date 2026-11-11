@@ -2,7 +2,7 @@
 # Author: Vitaliy Kukharik (vitabaks@gmail.com)
 # Title: pg_auto_reindexer - Automatic reindexing of B-tree indexes
 
-version=1.7
+version=1.8
 
 # ========================
 # === Help information ===
@@ -122,6 +122,8 @@ PG_VERSION=$(
 
 # Disable statement_timeout and set lock_timeout
 PGOPTIONS="-c statement_timeout=0 -c lock_timeout=1s"
+DROP_LOCK_TIMEOUT="10s"
+LEFTOVER_CLEANUP_DELAY=60
 
 # transaction_timeout exists since PG 17, so add it only for PG>=17.
 if [[ "${PG_VERSION}" -ge 17 ]]; then
@@ -456,59 +458,77 @@ function ensure_free_space() {
   return 0
 }
 
+function maintenance_window_set(){
+  [[ -n "${MAINTENANCE_START}" ]] && [[ -n "${MAINTENANCE_STOP}" ]]
+}
+
+function in_maintenance_window(){
+  maintenance_window_set || return 0
+
+  currentTime=$((10#$(date "+%H%M")))
+  start=$((10#${MAINTENANCE_START}))
+  stop=$((10#${MAINTENANCE_STOP}))
+
+  if [[ "${start}" -le "${stop}" ]]; then
+    # Window does NOT cross midnight
+    [[ "${currentTime}" -ge "${start}" && "${currentTime}" -le "${stop}" ]]
+  else
+    # Window CROSSES midnight
+    [[ "${currentTime}" -ge "${start}" || "${currentTime}" -le "${stop}" ]]
+  fi
+}
+
 function maintenance_window(){
-  if [[ -n "${MAINTENANCE_START}" ]] && [[ -n "${MAINTENANCE_STOP}" ]]; then
-    currentTime=$((10#$(date "+%H%M")))
-    start=$((10#${MAINTENANCE_START}))
-    stop=$((10#${MAINTENANCE_STOP}))
-    out_of_window=false
-
-    if [[ "${start}" -le "${stop}" ]]; then
-      # Window does NOT cross midnight
-      if [[ "${currentTime}" -lt "${start}" || "${currentTime}" -gt "${stop}" ]]; then
-        out_of_window=true
-      fi
-    else
-      # Window CROSSES midnight
-      if [[ "${currentTime}" -gt "${stop}" && "${currentTime}" -lt "${start}" ]]; then
-        out_of_window=true
-      fi
-    fi
-
-    if [[ "${out_of_window}" == true ]]; then
-      warnmsg "Current time: $(date "+%R %Z"). This is outside of the maintenance window: $(date --date="${MAINTENANCE_START}" "+%R")-$(date --date="${MAINTENANCE_STOP}" "+%R"). Exit."
-      exit
-    fi
+  if ! in_maintenance_window; then
+    warnmsg "Current time: $(date "+%R %Z"). This is outside of the maintenance window: $(date --date="${MAINTENANCE_START}" "+%R")-$(date --date="${MAINTENANCE_STOP}" "+%R"). Exit."
+    exit
   fi
 }
 
 drop_invalid_index() {
   local index="$1"
   local status="$2"
-  local invalid_index_name
+  local invalid_indexes_sql
+
+  drop_failed=false
 
   if [[ ${PG_VERSION} -le 11 ]]; then
-    invalid_index_name="index_${index}"
+    invalid_indexes_sql="
+      select format('%I.%I', schemaname, indexrelname)
+      from pg_stat_user_indexes
+      join pg_index using (indexrelid)
+      where not indisvalid
+        and format('%I.%I', schemaname, indexrelname) ~ 'index_${index}'
+    "
   else
-    invalid_index_name="${index}_cc(new|old)[0-9]*$"
+    invalid_indexes_sql="
+      select format('%I.%I', n.nspname, c.relname)
+      from pg_index src
+      join pg_index i on i.indrelid = src.indrelid and i.indexrelid <> src.indexrelid
+      join pg_class c on c.oid = i.indexrelid
+      join pg_namespace n on n.oid = c.relnamespace
+      where src.indexrelid = to_regclass('${index}')
+        and not i.indisvalid
+        and c.relname ~ '_cc(new|old)[0-9]*$'
+        and i.indkey = src.indkey
+        and i.indclass = src.indclass
+        and coalesce(pg_get_expr(i.indexprs, i.indrelid), '') = coalesce(pg_get_expr(src.indexprs, src.indrelid), '')
+        and coalesce(pg_get_expr(i.indpred, i.indrelid), '') = coalesce(pg_get_expr(src.indpred, src.indrelid), '')
+        and i.indexrelid not in (select index_relid from pg_stat_progress_create_index where index_relid is not null)
+    "
   fi
 
-  invalid_indexes=$(${_PSQL} -d "${db}" -tAXc "
-    select format('%I.%I', schemaname, indexrelname)
-    from pg_stat_user_indexes
-    join pg_index using (indexrelid)
-    where not indisvalid
-      and format('%I.%I', schemaname, indexrelname) ~ '${invalid_index_name}'
-  ")
+  invalid_indexes=$(${_PSQL} -d "${db}" -tAXc "${invalid_indexes_sql}")
 
   if [[ -n "${invalid_indexes}" ]]; then
     while IFS= read -r invalid_index; do
       info " Invalid index detected: ${invalid_index}. Dropping."
-      if ! output=$(PGOPTIONS="${PGOPTIONS}" ${_PSQL} -d "${db}" -tAXc "DROP INDEX CONCURRENTLY ${invalid_index}" 2>&1); then
+      if ! output=$(PGOPTIONS="${PGOPTIONS} -c lock_timeout=${DROP_LOCK_TIMEOUT}" ${_PSQL} -d "${db}" -tAXc "DROP INDEX CONCURRENTLY ${invalid_index}" 2>&1); then
         warnmsg " Failed to drop invalid index ${invalid_index}: ${output}"
+        drop_failed=true
       fi
       if [[ "${status}" == false ]] && [[ "$(echo "$invalid_indexes" | wc -w)" -eq 1 ]]; then
-        if [[ "${invalid_index}" == *_ccold ]]; then
+        if [[ "${invalid_index%\"}" =~ _ccold[0-9]*$ ]]; then
           info " Invalid index has a name with the suffix \"_ccold\". Stopping the reindex attempt."
           ccold_index=true
         else
@@ -517,6 +537,62 @@ drop_invalid_index() {
       fi
     done <<< "${invalid_indexes}"
   fi
+}
+
+drop_leftover_invalid_indexes() {
+  local leftover_sql
+  local leftover_indexes
+  local leftover_index
+  local cleanup_round=0
+
+  [[ ${PG_VERSION} -le 11 ]] && return 0
+
+  leftover_sql="
+    select format('%I.%I', n.nspname, c.relname)
+    from pg_index i
+    join pg_class c on c.oid = i.indexrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    where not i.indisvalid
+      and c.relname ~ '_cc(new|old)[0-9]*$'
+      and i.indexrelid not in (select index_relid from pg_stat_progress_create_index where index_relid is not null)
+      and exists (
+        select 1
+        from pg_index src
+        where src.indrelid = i.indrelid
+          and src.indexrelid <> i.indexrelid
+          and src.indisvalid
+          and src.indkey = i.indkey
+          and src.indclass = i.indclass
+          and coalesce(pg_get_expr(src.indexprs, src.indrelid), '') = coalesce(pg_get_expr(i.indexprs, i.indrelid), '')
+          and coalesce(pg_get_expr(src.indpred, src.indrelid), '') = coalesce(pg_get_expr(i.indpred, i.indrelid), '')
+      )
+  "
+
+  while true; do
+    leftover_indexes=$(${_PSQL} -d "${db}" -tAXc "${leftover_sql}")
+    [[ -n "${leftover_indexes}" ]] || return 0
+
+    cleanup_round=$((cleanup_round + 1))
+    info " [cleanup round ${cleanup_round}] $(echo "${leftover_indexes}" | wc -l) invalid index copies left"
+
+    while IFS= read -r leftover_index; do
+      in_maintenance_window || break
+      info " Dropping leftover invalid index ${leftover_index}."
+      if ! output=$(PGOPTIONS="${PGOPTIONS} -c lock_timeout=${DROP_LOCK_TIMEOUT}" ${_PSQL} -d "${db}" -tAXc "DROP INDEX CONCURRENTLY IF EXISTS ${leftover_index}" 2>&1); then
+        warnmsg " Failed to drop leftover invalid index ${leftover_index}: ${output}"
+      fi
+    done <<< "${leftover_indexes}"
+
+    leftover_indexes=$(${_PSQL} -d "${db}" -tAXc "${leftover_sql}")
+    [[ -n "${leftover_indexes}" ]] || return 0
+
+    if ! maintenance_window_set || ! in_maintenance_window; then
+      warnmsg " $(echo "${leftover_indexes}" | wc -l) invalid index copies remain after cleanup."
+      return 0
+    fi
+
+    sleep "${LEFTOVER_CLEANUP_DELAY}"
+  done
 }
 
 run_repack() {
@@ -555,6 +631,11 @@ process_reindex() {
 
   # Drop INVALID ccnew/ccold indexes (if any) before starting REINDEX
   drop_invalid_index "${index}"
+  if [[ "${drop_failed}" == true ]]; then
+    failed_reindex_count=$((failed_reindex_count + 1))
+    warnmsg " Invalid copies of index \"${index}\" remain. Skipping."
+    return 1
+  fi
 
   for delay in "${delays[@]}"; do
     sleep "${delay}"
@@ -575,6 +656,10 @@ process_reindex() {
       drop_invalid_index "${index}" "${success}"
       if [[ "${ccold_index}" == true ]]; then
         return 0
+      elif [[ "${drop_failed}" == true ]]; then
+        failed_reindex_count=$((failed_reindex_count + 1))
+        warnmsg " Invalid copies of index \"${index}\" remain. Skipping."
+        return 1
       else
         retry_n=$((retry_n + 1))
       fi
@@ -624,6 +709,12 @@ while IFS= read -r db; do
         pg_isready
         maintenance_window
 
+        if [[ -z "$(${_PSQL} -d "${db}" -tAXc "select to_regclass('${index}')")" ]]; then
+          warnmsg "[$i/${index_count}] index ${index} no longer exists. Skipping."
+          ((i++))
+          continue
+        fi
+
         index_size_before=$(check_index_size "${index}")
         index_size_after="${index_size_before}" # default for failed/skip paths
 
@@ -658,6 +749,8 @@ while IFS= read -r db; do
     else
       info " no bloat indexes were found"
     fi
+
+    drop_leftover_invalid_indexes
 
     if [[ "${FAILED_REINDEX_LIMIT}" -ne 0 && "${failed_reindex_count}" -ge "${FAILED_REINDEX_LIMIT}" ]]; then
       warnmsg "Exceeded ${FAILED_REINDEX_LIMIT} failed attempts. Skipping database ${db}."
